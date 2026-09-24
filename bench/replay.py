@@ -251,7 +251,7 @@ def main() -> None:
                 verify = {"candidate": chosen["candidate_threshold"], "verify": chosen["verify_threshold"]}
                 threshold, src = chosen["candidate_threshold"], "results/qqp_threshold.json (two-stage)"
             elif "verify_threshold" in chosen:  # --no-verify: fall back to the one-stage result
-                single = Path("results/qqp_threshold_v2_single_stage.json")
+                single = Path("results/qqp_threshold_single_stage.json")
                 threshold = json.loads(single.read_text())["chosen"]["threshold"]
                 src = str(single).replace("\\", "/")
             else:

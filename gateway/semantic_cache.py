@@ -99,6 +99,59 @@ def build_embedder(kind: str, model_name: str) -> Embedder:
     return MiniLMEmbedder(model_name)
 
 
+# ---------------------------------------------------------------- batching
+class EmbedBatcher:
+    """Micro-batching: combine embedding requests that arrive close together into ONE encode().
+
+    Encoding 32 sentences in one call costs far less than 32 separate calls (the model runs
+    one matrix multiply instead of 32 small ones). Each caller waits at most `max_wait_s`
+    (5 ms) for others to join; a full batch (`max_size`) is sent at once without waiting.
+    Every caller gets back only its own vector; if encode() fails, every caller gets the error.
+    """
+
+    def __init__(self, encode, pool: ThreadPoolExecutor, max_wait_s: float = 0.005, max_size: int = 32):
+        self._encode = encode
+        self._pool = pool
+        self.max_wait_s = max_wait_s
+        self.max_size = max_size
+        self._pending: list[tuple[str, asyncio.Future]] = []
+        self._timer: asyncio.TimerHandle | None = None
+        self._tasks: set[asyncio.Task] = set()  # keep running batches referenced until done
+
+    async def embed(self, text: str) -> np.ndarray:
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending.append((text, fut))
+        if len(self._pending) >= self.max_size:
+            self._flush()
+        elif self._timer is None:
+            self._timer = loop.call_later(self.max_wait_s, self._flush)
+        return await fut
+
+    def _flush(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        batch, self._pending = self._pending, []
+        if batch:
+            task = asyncio.get_running_loop().create_task(self._run(batch))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+    async def _run(self, batch: list[tuple[str, asyncio.Future]]) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            vecs = await loop.run_in_executor(self._pool, self._encode, [text for text, _ in batch])
+        except Exception as exc:  # hand the SAME error to everyone who was waiting
+            for _, fut in batch:
+                if not fut.done():  # a caller may have given up (cancelled) meanwhile
+                    fut.set_exception(exc)
+            return
+        for (_, fut), vec in zip(batch, vecs):
+            if not fut.done():
+                fut.set_result(vec)
+
+
 # ---------------------------------------------------------------- cache
 @dataclass
 class SemanticQuery:
@@ -147,6 +200,7 @@ class SemanticCache:
         self._lock = threading.Lock()  # FAISS indexes are not safe for concurrent writes
         # Own pool, so embedding can't starve (or be starved by) asyncio's shared default pool.
         self._pool = ThreadPoolExecutor(max_workers=POOL_WORKERS, thread_name_prefix="semantic")
+        self._batcher = EmbedBatcher(embedder.encode, self._pool)
 
     # ---- helpers
     def _index_for(self, ns: str):
@@ -188,10 +242,9 @@ class SemanticCache:
         if parts is None:
             return None
         ns, text = parts
-        # Embedding is CPU work (~5-15 ms). Running it on our worker threads keeps the async
-        # event loop free to serve other requests meanwhile.
-        loop = asyncio.get_running_loop()
-        vec = (await loop.run_in_executor(self._pool, self.embedder.encode, [text]))[0]
+        # Embedding is CPU work (~5-15 ms). The batcher runs it on our worker threads (keeping
+        # the event loop free) and merges requests that arrive together into one encode() call.
+        vec = await self._batcher.embed(text)
         return SemanticQuery(ns, text, vec)
 
     async def lookup(self, q: SemanticQuery) -> SemanticResult:

@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-09-24T12:22:38+00:00",
+  "generated_at": "2026-09-24T12:05:52+00:00",
   "machine": {
     "platform": "Windows-11-10.0.26200-SP0",
     "processor": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
     "cpu_count": 18,
     "python": "3.12.10",
     "ram_gb": 16.6,
-    "git_commit": "684854d"
+    "git_commit": null
   },
   "benchmark": "load",
   "trial_only_not_for_resume": false,
@@ -23,43 +23,43 @@
     "rate_limiter": "on (limit set high)"
   },
   "direct_to_mock": {
-    "requests": 3760,
-    "requests_recorded_exact": 3760,
+    "requests": 3795,
+    "requests_recorded_exact": 3795,
     "failures": 0,
     "success_pct": 100.0,
-    "rps": 61.07,
-    "p50_ms": 817.29,
-    "p95_ms": 833.88,
-    "p99_ms": 848.44,
-    "avg_ms": 817.8,
-    "percentile_source": "exact per-request times (3760 successful requests)"
+    "rps": 61.74,
+    "p50_ms": 809.3,
+    "p95_ms": 823.88,
+    "p99_ms": 830.11,
+    "avg_ms": 809.2,
+    "percentile_source": "exact per-request times (3795 successful requests)"
   },
   "through_gateway": {
-    "requests": 3223,
-    "requests_recorded_exact": 3223,
+    "requests": 2898,
+    "requests_recorded_exact": 2916,
     "failures": 0,
     "success_pct": 100.0,
-    "rps": 52.31,
-    "p50_ms": 942.62,
-    "p95_ms": 1102.82,
-    "p99_ms": 1274.23,
-    "avg_ms": 952.5,
-    "percentile_source": "exact per-request times (3223 successful requests)"
+    "rps": 47.26,
+    "p50_ms": 1024.79,
+    "p95_ms": 1353.24,
+    "p99_ms": 1535.96,
+    "avg_ms": 1058.4,
+    "percentile_source": "exact per-request times (2916 successful requests)"
   },
   "gateway_overhead_ms": {
-    "p50": 125.3,
-    "p95": 268.9,
-    "p99": 425.8,
+    "p50": 215.5,
+    "p95": 529.4,
+    "p99": 705.9,
     "method": "through_gateway percentile minus direct_to_mock percentile (same load)"
   },
   "gateway_cache_status_counts": {
-    "MISS": 3468
+    "MISS": 3159
   },
   "gateway_internal_overhead_ms": {
-    "requests": 3468,
-    "p50": 101.83,
-    "p95": 190.65,
-    "p99": 362.83,
+    "requests": 3159,
+    "p50": 159.84,
+    "p95": 410.13,
+    "p99": 508.11,
     "method": "per request, from the gateway log: latency_ms - upstream_ms"
   }
 }

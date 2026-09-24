@@ -11,8 +11,10 @@ RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# Download the embedding model at build time, so the container starts without internet.
+# Download the embedding model and the verify (cross-encoder) model at build time,
+# so the container starts without internet.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/quora-distilroberta-base')"
 ENV HF_HUB_OFFLINE=1
 
 COPY gateway ./gateway

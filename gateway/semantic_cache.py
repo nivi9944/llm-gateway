@@ -99,6 +99,32 @@ def build_embedder(kind: str, model_name: str) -> Embedder:
     return MiniLMEmbedder(model_name)
 
 
+# ---------------------------------------------------------------- verifier (stage 2)
+class Verifier(Protocol):
+    def score(self, pairs: list[tuple[str, str]]) -> list[float]:  # 0..1, higher = same meaning
+        ...
+
+
+class CrossEncoderVerifier:
+    """Stage 2 of the semantic cache: a cross-encoder reads BOTH questions together.
+
+    MiniLM (stage 1) turns each question into a vector separately, so it mostly sees shared
+    wording. A cross-encoder looks at the pair at once and can notice small words that flip the
+    meaning ("with" vs "without"). It is slower, so it only checks FAISS's single best candidate.
+    """
+
+    def __init__(self, model_name: str):
+        import torch
+        from sentence_transformers import CrossEncoder  # heavy import, done once at startup
+
+        torch.set_num_threads(TORCH_THREADS)
+        self.model = CrossEncoder(model_name, device="cpu")
+
+    def score(self, pairs: list[tuple[str, str]]) -> list[float]:
+        # This model has one output passed through a sigmoid, so scores are already 0..1.
+        return [float(s) for s in self.model.predict(pairs, convert_to_numpy=True, show_progress_bar=False)]
+
+
 # ---------------------------------------------------------------- batching
 class EmbedBatcher:
     """Micro-batching: combine embedding requests that arrive close together into ONE encode().
@@ -165,6 +191,7 @@ class SemanticResult:
     response: dict | None
     similarity: float | None
     match_text: str | None = None
+    verify_score: float | None = None  # stage-2 score, when the verifier ran
 
 
 def build_query_parts(body: dict) -> tuple[str, str] | None:
@@ -187,7 +214,11 @@ def build_query_parts(body: dict) -> tuple[str, str] | None:
 
 
 class SemanticCache:
-    def __init__(self, redis, embedder: Embedder, threshold: float, ttl_s: int):
+    def __init__(self, redis, embedder: Embedder, threshold: float, ttl_s: int,
+                 verifier: Verifier | None = None, verify_threshold: float = 0.5):
+        """`threshold` is the FAISS cut-off. Without a verifier it alone decides a hit (one
+        stage). With a verifier it only picks a CANDIDATE, and the answer is reused only if
+        the verifier's score is >= `verify_threshold` (two stages)."""
         import faiss  # imported here so the rest of the gateway loads without it
 
         faiss.omp_set_num_threads(1)  # single-query searches: OpenMP threads only add overhead
@@ -195,6 +226,8 @@ class SemanticCache:
         self.redis = redis
         self.embedder = embedder
         self.threshold = threshold
+        self.verifier = verifier
+        self.verify_threshold = verify_threshold
         self.ttl_s = ttl_s
         self._indexes: dict[str, object] = {}  # namespace -> faiss.IndexIDMap2(IndexFlatIP)
         self._lock = threading.Lock()  # FAISS indexes are not safe for concurrent writes
@@ -271,7 +304,18 @@ class SemanticCache:
                 or float(stored @ q.vector) < self.threshold:
             self._remove(q.namespace, entry_id)
             return SemanticResult(None, sim)
-        return SemanticResult(entry["response"], sim, entry.get("text"))
+        if self.verifier is None:
+            return SemanticResult(entry["response"], sim, entry.get("text"))
+        # Stage 2: let the cross-encoder judge (new question, cached question) as a pair.
+        try:
+            score = (await loop.run_in_executor(
+                self._pool, self.verifier.score, [(q.text, entry.get("text") or "")]))[0]
+        except Exception as exc:  # a broken verifier must never serve an unchecked answer
+            log.warning("semantic verify failed, treating as miss: %s", exc)
+            return SemanticResult(None, sim)
+        if score < self.verify_threshold:
+            return SemanticResult(None, sim, entry.get("text"), score)
+        return SemanticResult(entry["response"], sim, entry.get("text"), score)
 
     async def store(self, q: SemanticQuery, response: dict) -> None:
         if self.redis is None:

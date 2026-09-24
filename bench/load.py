@@ -103,9 +103,20 @@ def main() -> None:
         if e.get("status") == 200 and e.get("upstream_ms") is not None:
             internal.append(e["latency_ms"] - e["upstream_ms"])
 
+    from gateway.config import Settings
+
+    s = Settings()  # the gateway child process read the same .env, so this is what it ran with
+    semantic = {"verify_enabled": s.SEMANTIC_VERIFY_ENABLED}
+    if s.SEMANTIC_VERIFY_ENABLED:
+        semantic.update(candidate_threshold=s.SEMANTIC_CANDIDATE_THRESHOLD,
+                        verify_threshold=s.SEMANTIC_VERIFY_THRESHOLD)
+    else:
+        semantic["threshold"] = s.SEMANTIC_THRESHOLD
+
     result = {
         "benchmark": "load",
         "trial_only_not_for_resume": trial,
+        "semantic_cache": semantic,
         "setup": {"tool": "locust (headless)", "users": args.users, "seconds": args.seconds,
                   "spawn_rate_per_s": args.spawn_rate, "ramp_up_excluded": True,
                   "mock_latency_ms": args.latency_ms, "embedder": args.embedder,

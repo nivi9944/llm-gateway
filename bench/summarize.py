@@ -1,5 +1,10 @@
-"""Read every results/*.json, print a summary, fill the README results table, and draft resume
-bullets. Every number comes straight from the JSON files, so nothing is typed by hand.
+"""Read results/*.json, print a summary, fill the README tables, and draft resume bullets.
+Every number comes straight from the JSON files, so nothing is typed by hand.
+
+README blocks it rewrites (between HTML comment markers):
+  KEY      headline numbers                     (<!-- KEY:START --> ... <!-- KEY:END -->)
+  RESULTS  every measured number, with source   (<!-- RESULTS:START --> ... <!-- RESULTS:END -->)
+  COMPARE  single-stage vs two-stage cache, and baseline vs optimized load path
 
 Run:   python bench/summarize.py            (prints + updates README.md)
        python bench/summarize.py --dir trial_results --no-readme
@@ -13,7 +18,16 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
+
+# Comparison files (kept in results/ next to the current ones):
+SINGLE_QQP = "qqp_threshold_single_stage.json"  # semantic cache with MiniLM alone
+SINGLE_REPLAY = "replay_single_stage.json"
+LOAD_STEPS = [  # same load test, each optimisation added on top of the previous one
+    ("Baseline", "load_baseline.json"),
+    ("+ dedicated thread pool", "load_threadpool_only.json"),
+    ("+ micro-batching", "load_threadpool_batching.json"),
+    ("+ cross-encoder check (final)", "load_optimized.json"),
+]
 
 
 def load(d: Path, name: str) -> dict | None:
@@ -35,7 +49,7 @@ def build(d: Path) -> tuple[list[tuple[str, str, str]], dict]:
                     two_stage=q.get("mode") == "two_stage")
         note = "" if c["target_met"] else f" ({q['target_precision']:.0%} target NOT met)"
         if q.get("mode") == "two_stage":
-            rows.append(("Semantic cache: MiniLM candidate / cross-encoder verify threshold",
+            rows.append(("Semantic cache: MiniLM candidate / cross-encoder threshold",
                          f"{c['candidate_threshold']:.2f} / {c['verify_threshold']:.2f}{note}", "qqp_threshold.json"))
         else:
             rows.append(("Semantic threshold (chosen)", f"{c['threshold']:.2f}{note}", "qqp_threshold.json"))
@@ -49,7 +63,8 @@ def build(d: Path) -> tuple[list[tuple[str, str, str]], dict]:
     r = load(d, "replay.json")
     if r:
         vals.update(hit_rate=r["hit_rate"], saved=r["est_cost_saved_pct"], replay_n=r["requests"],
-                    sem_prec=r["semantic_hit_precision"], mix=r["realised_mix"])
+                    sem_prec=r["semantic_hit_precision"], all_prec=r.get("all_hit_precision"),
+                    mix=r["realised_mix"])
         mix = r["realised_mix"]
         rows += [
             ("Replay: overall cache hit rate", fmt_pct(r["hit_rate"]), "replay.json"),
@@ -67,7 +82,7 @@ def build(d: Path) -> tuple[list[tuple[str, str, str]], dict]:
     if ld:
         g, o = ld["through_gateway"], ld["gateway_overhead_ms"]
         vals.update(rps=g["rps"], p95_overhead=o["p95"], p95_internal=ld["gateway_internal_overhead_ms"]["p95"],
-                    users=ld["setup"]["users"])
+                    users=ld["setup"]["users"], latency_ms=ld["setup"]["mock_latency_ms"])
         rows += [
             (f"Load: throughput ({ld['setup']['users']} users, {ld['setup']['mock_latency_ms']:.0f} ms provider)",
              f"{g['rps']:.1f} req/s", "load.json"),
@@ -94,8 +109,14 @@ def build(d: Path) -> tuple[list[tuple[str, str, str]], dict]:
         ]
     t = load(d, "tests.json")
     if t:
-        vals.update(tests=t["passed"])
+        vals.update(tests=t["passed"], tests_total=t["total"])
         rows.append(("Automated tests passing", f"{t['passed']} of {t['total']}", "tests.json"))
+    single = load(d, SINGLE_QQP)
+    if single:
+        vals.update(single_recall=single["chosen"]["recall"], single_precision=single["chosen"]["precision"])
+    base = load(d, LOAD_STEPS[0][1])
+    if base:
+        vals.update(base_p95_overhead=base["gateway_overhead_ms"]["p95"])
     return rows, vals
 
 
@@ -105,66 +126,95 @@ def machine_line(d: Path) -> str:
         if j:
             m = j["machine"]
             return (f"Measured on: {m.get('platform')}, {m.get('cpu_count')} logical CPUs, "
-                    f"{m.get('ram_gb', '?')} GB RAM, Python {m.get('python')}, {j['generated_at']}.")
+                    f"{m.get('ram_gb', '?')} GB RAM, Python {m.get('python')}.")
     return ""
 
 
-# Version history: which result file holds each version's numbers. The cache logic did not change
-# between v0 and v2 (only speed work), so those versions share the single-stage cache runs.
-VERSIONS = [
-    ("v0 original", {"load": "load_v0_original.json", "qqp": "qqp_threshold_v2_single_stage.json",
-                     "replay": "replay_v2_single_stage.json"}),
-    ("v1 thread pool", {"load": "load_v1_threadpool.json", "qqp": "qqp_threshold_v2_single_stage.json",
-                        "replay": "replay_v2_single_stage.json"}),
-    ("v2 batching", {"load": "load_v2_batching.json", "qqp": "qqp_threshold_v2_single_stage.json",
-                     "replay": "replay_v2_single_stage.json"}),
-    ("v3 two-stage", {"load": "load_v3_two_stage.json", "qqp": "qqp_threshold.json", "replay": "replay.json"}),
-]
-VERSION_METRICS = [
-    ("QQP hit precision", "qqp", lambda j: fmt_pct(j["chosen"]["precision"])),
-    ("QQP paraphrase recall", "qqp", lambda j: fmt_pct(j["chosen"]["recall"])),
-    ("QQP false-hit rate", "qqp", lambda j: fmt_pct(j["chosen"]["false_hit_rate"], 2)),
-    ("Replay hit rate", "replay", lambda j: fmt_pct(j["hit_rate"])),
-    ("Replay paraphrases served from cache", "replay", lambda j: fmt_pct(j["paraphrase_catch_rate"])),
-    ("Replay semantic hits correct", "replay", lambda j: fmt_pct(j["semantic_hit_precision"])),
-    ("Replay all hits correct", "replay", lambda j: fmt_pct(j["all_hit_precision"])),
-    ("Replay est. spend saved", "replay", lambda j: f"{j['est_cost_saved_pct']:.1f}%"),
-    ("Load throughput", "load", lambda j: f"{j['through_gateway']['rps']:.1f} req/s"),
-    ("Load overhead p50", "load", lambda j: f"{j['gateway_overhead_ms']['p50']:.1f} ms"),
-    ("Load overhead p95", "load", lambda j: f"{j['gateway_overhead_ms']['p95']:.1f} ms"),
-    ("Load in-gateway time p95", "load", lambda j: f"{j['gateway_internal_overhead_ms']['p95']:.1f} ms"),
-]
+def overhead_cut(v: dict) -> int:
+    """Whole-percent reduction in p95 overhead, rounded DOWN so it never overstates."""
+    return math.floor(100 * (1 - v["p95_overhead"] / v["base_p95_overhead"]))
 
 
-def final_version(d: Path) -> str | None:
-    ld = load(d, "load.json")
-    if ld is None:
-        return None
-    return "v3 two-stage" if ld.get("semantic_cache", {}).get("verify_enabled") else "v2 batching"
-
-
-def versions_table(d: Path) -> list[str]:
-    files = {name: {k: load(d, f) for k, f in m.items()} for name, m in VERSIONS}
-    names = [n for n, _ in VERSIONS if all(files[n].values())]
-    if len(names) < 2:
+def key_table(v: dict, src: str) -> list[str]:
+    need = {"precision", "recall", "single_recall", "hit_rate", "saved", "all_prec", "success_with",
+            "success_without", "fault_rate", "p95_overhead", "base_p95_overhead", "rps", "users", "tests"}
+    if not need <= v.keys():
         return []
-    final = final_version(d)
-    head = [f"{n} (final)" if n == final else n for n in names]
-    out = ["| Metric | " + " | ".join(head) + " |", "|---|" + "---|" * len(names)]
-    for label, kind, fn in VERSION_METRICS:
-        out.append(f"| {label} | " + " | ".join(fn(files[n][kind]) for n in names) + " |")
+    s = lambda *names: ", ".join(f"`{src}/{n}`" for n in names)  # noqa: E731
+    rows = [
+        (f"Semantic-cache hit precision ({v['qqp_pairs']:,} labelled question pairs)",
+         fmt_pct(v["precision"]), s("qqp_threshold.json")),
+        ("Paraphrase recall: single-stage embedding → two-stage",
+         f"{fmt_pct(v['single_recall'])} → {fmt_pct(v['recall'])}", s(SINGLE_QQP, "qqp_threshold.json")),
+        (f"Cache hit rate / estimated LLM spend saved ({v['replay_n']:,}-request replay)",
+         f"{fmt_pct(v['hit_rate'])} / {v['saved']:.1f}%", s("replay.json")),
+        ("Cache hits that returned a correct answer", fmt_pct(v["all_prec"]), s("replay.json")),
+        (f"Success rate at {100 * v['fault_rate']:.0f}% provider faults: protected vs unprotected",
+         f"{v['success_with']:.1f}% vs {v['success_without']:.1f}%", s("chaos.json")),
+        (f"p95 gateway overhead at {v['users']} concurrent users: baseline → optimized",
+         f"{v['base_p95_overhead']:.0f} → {v['p95_overhead']:.0f} ms ({overhead_cut(v)}% lower)",
+         s(LOAD_STEPS[0][1], "load.json")),
+        (f"Throughput ({v['users']} users, {v['latency_ms']:.0f} ms provider latency)",
+         f"{v['rps']:.1f} req/s", s("load.json")),
+        ("Automated tests", f"{v['tests']} passing", s("tests.json")),
+    ]
+    return ["| Metric | Result | Source |", "|---|---|---|", *[f"| {a} | {b} | {c} |" for a, b, c in rows]]
+
+
+def compare_tables(d: Path, src: str) -> list[str]:
+    out = []
+    single, two = load(d, SINGLE_QQP), load(d, "qqp_threshold.json")
+    rs, rt = load(d, SINGLE_REPLAY), load(d, "replay.json")
+    if single and two and rs and rt:
+        sc, tc = single["chosen"], two["chosen"]
+        rows = [
+            ("Threshold(s)", f"{sc['threshold']:.2f}",
+             f"{tc.get('candidate_threshold', 0):.2f} / {tc['threshold']:.2f}"),
+            ("QQP hit precision", fmt_pct(sc["precision"]), fmt_pct(tc["precision"])),
+            ("QQP paraphrase recall", fmt_pct(sc["recall"]), fmt_pct(tc["recall"])),
+            ("QQP false-hit rate", fmt_pct(sc["false_hit_rate"], 2), fmt_pct(tc["false_hit_rate"], 2)),
+            ("Replay hit rate", fmt_pct(rs["hit_rate"]), fmt_pct(rt["hit_rate"])),
+            ("Replay paraphrases served from cache", fmt_pct(rs["paraphrase_catch_rate"]),
+             fmt_pct(rt["paraphrase_catch_rate"])),
+            ("Replay semantic hits correct", fmt_pct(rs["semantic_hit_precision"]),
+             fmt_pct(rt["semantic_hit_precision"])),
+            ("Replay all hits correct", fmt_pct(rs["all_hit_precision"]), fmt_pct(rt["all_hit_precision"])),
+            ("Replay wrong answers served", f"{rs['wrong_answers_served']:,} of {rs['requests']:,}",
+             f"{rt['wrong_answers_served']:,} of {rt['requests']:,}"),
+            ("Replay estimated spend saved", f"{rs['est_cost_saved_pct']:.1f}%", f"{rt['est_cost_saved_pct']:.1f}%"),
+        ]
+        out += ["**Semantic cache: single-stage vs two-stage** "
+                f"(`{src}/{SINGLE_QQP}`, `{src}/{SINGLE_REPLAY}` vs `{src}/qqp_threshold.json`, `{src}/replay.json`)",
+                "",
+                "| Metric | Single-stage (MiniLM only) | Two-stage (MiniLM + cross-encoder) |", "|---|---|---|",
+                *[f"| {a} | {b} | {c} |" for a, b, c in rows], ""]
+    steps = [(name, load(d, f), f) for name, f in LOAD_STEPS]
+    steps = [s for s in steps if s[1]]
+    if len(steps) >= 2:
+        metrics = [
+            ("Throughput", lambda j: f"{j['through_gateway']['rps']:.1f} req/s"),
+            ("Gateway overhead p50", lambda j: f"{j['gateway_overhead_ms']['p50']:.1f} ms"),
+            ("Gateway overhead p95", lambda j: f"{j['gateway_overhead_ms']['p95']:.1f} ms"),
+            ("Gateway overhead p99", lambda j: f"{j['gateway_overhead_ms']['p99']:.1f} ms"),
+            ("In-gateway time p95", lambda j: f"{j['gateway_internal_overhead_ms']['p95']:.1f} ms"),
+            ("Success rate", lambda j: f"{j['through_gateway']['success_pct']:.1f}%"),
+        ]
+        out += ["**Load path: baseline vs optimized** (each column adds one change to the one before; "
+                "files: " + ", ".join(f"`{src}/{f}`" for _, _, f in steps) + ")",
+                "",
+                "| Metric | " + " | ".join(n for n, _, _ in steps) + " |", "|---|" + "---|" * len(steps),
+                *[f"| {label} | " + " | ".join(fn(j) for _, j, _ in steps) + " |" for label, fn in metrics]]
     return out
 
 
-def bullets(v: dict, d: Path | None = None) -> list[str]:
+def bullets(v: dict) -> list[str]:
     out = []
-    first = {k: load(d, f) for k, f in VERSIONS[0][1].items()} if d else {}
     if {"saved", "hit_rate"} <= v.keys():
         kind = "two-stage semantic" if v.get("two_stage") else "semantic"
         out.append(f"Built an async LLM gateway with exact + {kind} caching, cutting estimated LLM spend "
                    f"**{v['saved']:.1f}%** at **{100 * v['hit_rate']:.1f}%** hit rate.")
-    if v.get("two_stage") and first.get("qqp"):
-        r0, r1 = first["qqp"]["chosen"]["recall"], v["recall"]
+    if v.get("two_stage") and "single_recall" in v:
+        r0, r1 = v["single_recall"], v["recall"]
         out.append(f"Added a cross-encoder check to the semantic cache, lifting paraphrase recall "
                    f"**{r1 / r0:.1f}x** (**{100 * r0:.1f}%** to **{100 * r1:.1f}%**) at "
                    f"**{math.floor(1000 * v['precision']) / 10:.1f}%** precision.")
@@ -176,16 +226,17 @@ def bullets(v: dict, d: Path | None = None) -> list[str]:
         sw = f"{v['success_with']:.1f}".rstrip("0").rstrip(".")
         out.append("Added atomic Redis + Lua rate limiting, retries, fallback and a circuit breaker, keeping "
                    f"**{sw}%** success at {100 * v['fault_rate']:.0f}% faults.")
-    if first.get("load") and {"p95_overhead", "users"} <= v.keys():
-        o0, o1 = first["load"]["gateway_overhead_ms"]["p95"], v["p95_overhead"]
-        out.append(f"Cut p95 gateway overhead **{math.floor(100 * (1 - o1 / o0))}%** (**{o0:.0f}** to **{o1:.0f} ms**) "
-                   f"at {v['users']} concurrent users with a thread pool and micro-batching.")
-    elif {"rps", "p95_overhead", "tests", "users"} <= v.keys():
-        # RPS here is capped by the test design (users / provider latency), so the bullet leads with
-        # the overhead number, which is what the load test really measures.
-        out.append(f"Kept p95 gateway overhead at **{v['p95_overhead']:.0f} ms** under {v['users']} concurrent users "
-                   f"(**{v['rps']:.0f}** req/s), verified by Locust and **{v['tests']}** pytest cases.")
+    if {"base_p95_overhead", "p95_overhead", "users"} <= v.keys():
+        out.append(f"Cut p95 gateway overhead **{overhead_cut(v)}%** (**{v['base_p95_overhead']:.0f}** to "
+                   f"**{v['p95_overhead']:.0f} ms**) at {v['users']} concurrent users with a thread pool and "
+                   "micro-batching.")
     return out
+
+
+def replace_block(text: str, name: str, body: list[str]) -> str:
+    start, end = f"<!-- {name}:START -->", f"<!-- {name}:END -->"
+    block = "\n".join([start, "", *body, "", end])
+    return re.sub(re.escape(start) + r".*?" + re.escape(end), lambda _: block, text, flags=re.S)
 
 
 def main() -> None:
@@ -198,22 +249,26 @@ def main() -> None:
     if not rows:
         print(f"no result files in {d}")
         return
-    table = ["| Metric | Value | Source |", "|---|---|---|"]
-    table += [f"| {a} | {b} | `{args.dir}/{c}` |" for a, b, c in rows]
-    history = versions_table(d)
-    if history:
-        history = ["", "Version history (each column is read from its own results file):", "", *history]
-    block = "\n".join([START, "", machine_line(d), "", *table, *history, "", END])
-    print(block)
+    blocks = {
+        "KEY": key_table(vals, args.dir),
+        "RESULTS": [machine_line(d), "", "| Metric | Value | Source |", "|---|---|---|",
+                    *[f"| {a} | {b} | `{args.dir}/{c}` |" for a, b, c in rows]],
+        "COMPARE": compare_tables(d, args.dir),
+    }
+    for name, body in blocks.items():
+        if body:
+            print(f"\n[{name}]\n" + "\n".join(body))
     print("\nDraft resume bullets (check length and wording before using):")
-    for b in bullets(vals, d):
+    for b in bullets(vals):
         print(f"- {b}  ({len(b.replace('**', ''))} chars)")
     if not args.no_readme and args.dir == "results":
         readme = ROOT / "README.md"
         text = readme.read_text(encoding="utf-8")
-        text = re.sub(re.escape(START) + r".*?" + re.escape(END), lambda _: block, text, flags=re.S)
+        for name, body in blocks.items():
+            if body:
+                text = replace_block(text, name, body)
         readme.write_text(text, encoding="utf-8")
-        print("\nREADME.md results table updated.")
+        print("\nREADME.md tables updated.")
 
 
 if __name__ == "__main__":

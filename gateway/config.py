@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     PROVIDER_ORDER: str = "gemini,ollama"  # tried left to right; benchmarks use "mock"
     GEMINI_API_KEY: str = ""
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_MODEL: str = "gemini-3.6-flash"
     OLLAMA_BASE_URL: str = "http://host.docker.internal:11434/v1"
     OLLAMA_MODEL: str = "qwen2.5:7b"
     MOCK_BASE_URL: str = "http://mock-provider:9000/v1"

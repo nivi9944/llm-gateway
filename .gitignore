@@ -21,3 +21,8 @@ Thumbs.db
 
 # local HuggingFace cache (model + QQP dataset)
 .hf-cache/
+
+# personal build notes (kept locally, not published)
+HANDOVER.md
+PLAN.md
+CLAUDE.md

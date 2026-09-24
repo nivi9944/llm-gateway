@@ -2,7 +2,8 @@
 Every number comes straight from the JSON files, so nothing is typed by hand.
 
 README blocks it rewrites (between HTML comment markers):
-  KEY      headline numbers                     (<!-- KEY:START --> ... <!-- KEY:END -->)
+  HIGHLIGHTS  three one-line highlights under the title
+  KEY      headline numbers                    (<!-- KEY:START --> ... <!-- KEY:END -->)
   RESULTS  every measured number, with source   (<!-- RESULTS:START --> ... <!-- RESULTS:END -->)
   COMPARE  single-stage vs two-stage cache, and baseline vs optimized load path
 
@@ -161,6 +162,22 @@ def key_table(v: dict, src: str) -> list[str]:
     return ["| Metric | Result | Source |", "|---|---|---|", *[f"| {a} | {b} | {c} |" for a, b, c in rows]]
 
 
+def highlights(v: dict) -> list[str]:
+    need = {"precision", "recall", "single_recall", "saved", "replay_n", "all_prec", "success_with",
+            "success_without", "fault_rate", "p95_overhead", "base_p95_overhead"}
+    if not need <= v.keys():
+        return []
+    sw = f"{v['success_with']:.1f}".rstrip("0").rstrip(".")
+    return [
+        f"- Two-stage semantic cache (MiniLM + cross-encoder): {fmt_pct(v['precision'])} hit precision, "
+        f"{math.floor(v['recall'] / v['single_recall'])}x more paraphrases caught than embedding alone.",
+        f"- {v['saved']:.1f}% estimated LLM spend saved on a {v['replay_n']:,}-request replay, "
+        f"with {fmt_pct(v['all_prec'])} of cached answers correct.",
+        f"- {sw}% success at {100 * v['fault_rate']:.0f}% provider faults (vs {v['success_without']:.0f}% "
+        f"unprotected); p95 gateway overhead cut {overhead_cut(v)}% with batching.",
+    ]
+
+
 def compare_tables(d: Path, src: str) -> list[str]:
     out = []
     single, two = load(d, SINGLE_QQP), load(d, "qqp_threshold.json")
@@ -250,6 +267,7 @@ def main() -> None:
         print(f"no result files in {d}")
         return
     blocks = {
+        "HIGHLIGHTS": highlights(vals),
         "KEY": key_table(vals, args.dir),
         "RESULTS": [machine_line(d), "", "| Metric | Value | Source |", "|---|---|---|",
                     *[f"| {a} | {b} | `{args.dir}/{c}` |" for a, b, c in rows]],

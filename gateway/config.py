@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     CACHE_ENABLED: bool = True
     CACHE_TTL_SECONDS: int = 86400
     SEMANTIC_ENABLED: bool = True
-    SEMANTIC_THRESHOLD: float = 0.90  # replace with the value from results/qqp_threshold.json
+    SEMANTIC_THRESHOLD: float = 0.98  # embedding-only cut-off, from results/qqp_threshold_single_stage.json
     EMBEDDER: str = "minilm"  # "minilm" (real) or "hash" (tiny stand-in for tests / offline trials)
     EMBED_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     # Two-stage semantic cache. When ON, FAISS only proposes a candidate at
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # When OFF, SEMANTIC_THRESHOLD alone decides (the one-stage cache).
     SEMANTIC_VERIFY_ENABLED: bool = True
     SEMANTIC_CANDIDATE_THRESHOLD: float = 0.85
-    SEMANTIC_VERIFY_THRESHOLD: float = 0.5  # replace with the value from qqp_threshold.py --two-stage
+    SEMANTIC_VERIFY_THRESHOLD: float = 0.98  # from results/qqp_threshold.json (qqp_threshold.py --two-stage)
     VERIFY_MODEL: str = "cross-encoder/quora-distilroberta-base"
 
     # --- Rate limiting (token bucket per key) ---
@@ -63,8 +63,9 @@ class Settings(BaseSettings):
     BREAKER_COOLDOWN_S: float = 30.0
 
     # --- Cost estimate (USD per 1M tokens), Gemini paid-tier list price ---
-    # Source: ai.google.dev/gemini-api/docs/pricing (checked 2026-09-24, gemini-3.8-flash,
-    # price valid through 2026-12-31). These are ESTIMATES: free-tier calls actually cost 0.
+    # Source: ai.google.dev/gemini-api/docs/pricing (checked 2026-09-24): this list price applies to
+    # gemini-3.6-flash, the default model (same as gemini-3.8-flash; valid through 2026-12-31).
+    # These are ESTIMATES: free-tier calls actually cost 0.
     PRICE_INPUT_PER_M: float = 0.75
     PRICE_OUTPUT_PER_M: float = 3.75
 

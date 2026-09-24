@@ -58,6 +58,73 @@ async def test_embed_and_search_run_on_the_cache_own_thread_pool():
     cache.close()
 
 
+class CountingEmbedder(HashEmbedder):
+    """Records the size of every encode() call."""
+
+    def __init__(self):
+        self.calls: list[int] = []
+
+    def encode(self, texts):
+        self.calls.append(len(texts))
+        return super().encode(texts)
+
+
+async def test_batcher_combines_concurrent_calls_into_one_encode():
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gateway.semantic_cache import EmbedBatcher
+
+    emb = CountingEmbedder()
+    with ThreadPoolExecutor(2) as pool:
+        batcher = EmbedBatcher(emb.encode, pool)
+        texts = [f"question number {i}" for i in range(10)]
+        vecs = await asyncio.gather(*(batcher.embed(t) for t in texts))
+    assert emb.calls == [10]  # ten callers, ONE encode()
+    for t, v in zip(texts, vecs):  # and each caller got its own vector back
+        assert (v == emb.encode([t])[0]).all()
+
+
+async def test_batcher_single_call_still_works():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gateway.semantic_cache import EmbedBatcher
+
+    emb = CountingEmbedder()
+    with ThreadPoolExecutor(1) as pool:
+        v = await EmbedBatcher(emb.encode, pool).embed("just one question")
+    assert emb.calls == [1] and v.shape == (emb.dim,)
+
+
+async def test_batcher_full_batch_is_sent_without_waiting():
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gateway.semantic_cache import EmbedBatcher
+
+    emb = CountingEmbedder()
+    with ThreadPoolExecutor(2) as pool:
+        batcher = EmbedBatcher(emb.encode, pool, max_wait_s=10, max_size=4)  # timer would never fire
+        await asyncio.wait_for(asyncio.gather(*(batcher.embed(f"q{i}") for i in range(8))), timeout=2)
+    assert emb.calls == [4, 4]
+
+
+async def test_batcher_error_reaches_every_caller():
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gateway.semantic_cache import EmbedBatcher
+
+    def broken(texts):
+        raise RuntimeError("model crashed")
+
+    with ThreadPoolExecutor(1) as pool:
+        batcher = EmbedBatcher(broken, pool)
+        results = await asyncio.gather(*(batcher.embed(f"q{i}") for i in range(3)), return_exceptions=True)
+    assert len(results) == 3
+    assert all(isinstance(r, RuntimeError) and str(r) == "model crashed" for r in results)
+
+
 async def test_warm_start_rebuilds_index_from_redis():
     r = await fresh_redis()
     async with gateway(redis_client=r) as gw:

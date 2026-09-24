@@ -54,7 +54,7 @@ this table by `python bench/summarize.py`. Nothing is typed by hand.
 
 <!-- RESULTS:START -->
 
-Measured on: Windows-11-10.0.26200-SP0, 18 logical CPUs, 16.6 GB RAM, Python 3.12.10, 2026-09-24T12:05:52+00:00.
+Measured on: Windows-11-10.0.26200-SP0, 18 logical CPUs, 16.6 GB RAM, Python 3.12.10, 2026-09-24T12:22:38+00:00.
 
 | Metric | Value | Source |
 |---|---|---|
@@ -69,15 +69,15 @@ Measured on: Windows-11-10.0.26200-SP0, 18 logical CPUs, 16.6 GB RAM, Python 3.1
 | Replay: all cache hits that were correct | 99.6% | `results/replay.json` |
 | Replay: estimated LLM spend saved | 22.5% | `results/replay.json` |
 | Replay workload mix (unique / near-miss / exact / paraphrase) | 41% / 20% / 20% / 19% | `results/replay.json` |
-| Load: throughput (50 users, 800 ms provider) | 47.3 req/s | `results/load.json` |
-| Load: end-to-end p50 / p95 / p99 | 1025 / 1353 / 1536 ms | `results/load.json` |
-| Load: gateway overhead p50 / p95 / p99 (vs direct) | 215.5 / 529.4 / 705.9 ms | `results/load.json` |
-| Load: in-gateway time p95 (log: latency - upstream) | 410.1 ms | `results/load.json` |
+| Load: throughput (50 users, 800 ms provider) | 52.3 req/s | `results/load.json` |
+| Load: end-to-end p50 / p95 / p99 | 943 / 1103 / 1274 ms | `results/load.json` |
+| Load: gateway overhead p50 / p95 / p99 (vs direct) | 125.3 / 268.9 / 425.8 ms | `results/load.json` |
+| Load: in-gateway time p95 (log: latency - upstream) | 190.7 ms | `results/load.json` |
 | Load: success rate | 100.00% | `results/load.json` |
 | Chaos (30% failures): success without / with protection | 71.0% / 100.0% | `results/chaos.json` |
 | Chaos (outage): calls to dead provider, no breaker / breaker | 6,000 / 20 | `results/chaos.json` |
 | Chaos (outage): p95 latency, no breaker / breaker | 872 / 139 ms | `results/chaos.json` |
-| Automated tests passing | 52 of 52 | `results/tests.json` |
+| Automated tests passing | 56 of 56 | `results/tests.json` |
 
 <!-- RESULTS:END -->
 

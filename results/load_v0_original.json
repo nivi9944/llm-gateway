@@ -1,20 +1,15 @@
 {
-  "generated_at": "2026-09-24T12:58:48+00:00",
+  "generated_at": "2026-09-24T11:55:31+00:00",
   "machine": {
     "platform": "Windows-11-10.0.26200-SP0",
     "processor": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
     "cpu_count": 18,
     "python": "3.12.10",
     "ram_gb": 16.6,
-    "git_commit": "9c02f1f"
+    "git_commit": null
   },
   "benchmark": "load",
   "trial_only_not_for_resume": false,
-  "semantic_cache": {
-    "verify_enabled": true,
-    "candidate_threshold": 0.85,
-    "verify_threshold": 0.98
-  },
   "setup": {
     "tool": "locust (headless)",
     "users": 50,
@@ -28,43 +23,43 @@
     "rate_limiter": "on (limit set high)"
   },
   "direct_to_mock": {
-    "requests": 3801,
-    "requests_recorded_exact": 3801,
+    "requests": 3731,
+    "requests_recorded_exact": 3746,
     "failures": 0,
     "success_pct": 100.0,
-    "rps": 61.81,
-    "p50_ms": 807.4,
-    "p95_ms": 820.95,
-    "p99_ms": 827.01,
-    "avg_ms": 807.5,
-    "percentile_source": "exact per-request times (3801 successful requests)"
+    "rps": 61.72,
+    "p50_ms": 809.04,
+    "p95_ms": 825.25,
+    "p99_ms": 831.75,
+    "avg_ms": 810.2,
+    "percentile_source": "exact per-request times (3746 successful requests)"
   },
   "through_gateway": {
-    "requests": 3242,
-    "requests_recorded_exact": 3242,
+    "requests": 2177,
+    "requests_recorded_exact": 2177,
     "failures": 0,
     "success_pct": 100.0,
-    "rps": 52.78,
-    "p50_ms": 924.89,
-    "p95_ms": 1153.32,
-    "p99_ms": 1317.13,
-    "avg_ms": 950.8,
-    "percentile_source": "exact per-request times (3242 successful requests)"
+    "rps": 35.28,
+    "p50_ms": 1310.37,
+    "p95_ms": 2095.33,
+    "p99_ms": 2596.87,
+    "avg_ms": 1412.9,
+    "percentile_source": "exact per-request times (2177 successful requests)"
   },
   "gateway_overhead_ms": {
-    "p50": 117.5,
-    "p95": 332.4,
-    "p99": 490.1,
+    "p50": 501.3,
+    "p95": 1270.1,
+    "p99": 1765.1,
     "method": "through_gateway percentile minus direct_to_mock percentile (same load)"
   },
   "gateway_cache_status_counts": {
-    "MISS": 3474
+    "MISS": 2362
   },
   "gateway_internal_overhead_ms": {
-    "requests": 3474,
-    "p50": 92.35,
-    "p95": 210.43,
-    "p99": 296.56,
+    "requests": 2362,
+    "p50": 292.44,
+    "p95": 584.14,
+    "p99": 808.97,
     "method": "per request, from the gateway log: latency_ms - upstream_ms"
   }
 }

@@ -16,7 +16,13 @@ lower threshold catches more paraphrases (more savings) while still meeting the 
 Uses the QQP *validation* split. The replay benchmark uses *train* pairs and drops any pair that
 shares a question with validation, so tuning and evaluation never see the same text.
 
+Two-stage mode (--two-stage): MiniLM similarity >= a FIXED candidate threshold (0.85) picks the
+candidate, then a cross-encoder scores each candidate pair. We sweep the cross-encoder threshold
+instead, with the same rule (lowest one with precision >= target). A pair counts as a hit only if
+it passes BOTH stages, exactly like the gateway.
+
 Run:   python bench/qqp_threshold.py                  (real run, ~20k pairs)
+       python bench/qqp_threshold.py --two-stage      (two-stage cache: sweep the verify threshold)
        python bench/qqp_threshold.py --smoke          (tiny offline check, hash embedder)
 """
 from __future__ import annotations
@@ -32,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bench._common import save_json  # noqa: E402
 
 THRESHOLDS = np.round(np.arange(0.70, 0.9901, 0.01), 2)
+VERIFY_THRESHOLDS = np.round(np.arange(0.05, 0.9901, 0.01), 2)  # cross-encoder scores are 0..1
 
 
 def load_pairs(args) -> tuple[list[str], list[str], np.ndarray, dict]:
@@ -63,10 +70,10 @@ def encode_all(texts: list[str], embedder, batch: int = 256) -> np.ndarray:
     return np.vstack(out)
 
 
-def sweep(sims: np.ndarray, y: np.ndarray) -> list[dict]:
+def sweep(sims: np.ndarray, y: np.ndarray, thresholds=THRESHOLDS) -> list[dict]:
     rows = []
     pos, neg = int((y == 1).sum()), int((y == 0).sum())
-    for t in THRESHOLDS:
+    for t in thresholds:
         pred = sims >= t
         tp = int((pred & (y == 1)).sum())
         fp = int((pred & (y == 0)).sum())
@@ -91,7 +98,8 @@ def choose(rows: list[dict], target: float) -> dict:
     return {**best, "target_met": False}
 
 
-def plot(rows: list[dict], chosen: dict, target: float, path: Path, title: str) -> None:
+def plot(rows: list[dict], chosen: dict, target: float, path: Path, title: str,
+         xlabel: str = "Similarity threshold") -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -116,7 +124,7 @@ def plot(rows: list[dict], chosen: dict, target: float, path: Path, title: str) 
     ax.annotate(f"{label} {chosen['threshold']:.2f}\nprecision {chosen['precision']:.1%}\nrecall {chosen['recall']:.1%}",
                 xy=(chosen["threshold"], chosen["precision"]), xytext=(-8 if right else 8, -48),
                 textcoords="offset points", ha="right" if right else "left", fontsize=8, color=ink)
-    ax.set_xlabel("Similarity threshold", color=ink2)
+    ax.set_xlabel(xlabel, color=ink2)
     ax.set_ylabel("Rate", color=ink2)
     ax.set_ylim(0, 1.02)
     ax.set_title(title, color=ink, fontsize=11, loc="left")
@@ -138,6 +146,9 @@ def main() -> None:
     ap.add_argument("--target", type=float, default=0.95, help="minimum precision")
     ap.add_argument("--model", default="sentence-transformers/all-MiniLM-L6-v2")
     ap.add_argument("--smoke", action="store_true", help="offline check with tiny data + hash embedder")
+    ap.add_argument("--two-stage", action="store_true", help="FAISS candidate + cross-encoder verify")
+    ap.add_argument("--candidate", type=float, default=0.85, help="two-stage: fixed MiniLM candidate threshold")
+    ap.add_argument("--verify-model", default="cross-encoder/quora-distilroberta-base")
     ap.add_argument("--out", default=None, help="output folder (default results/, smoke: trial_results/)")
     args = ap.parse_args()
     out = Path(args.out or ("trial_results" if args.smoke else "results"))
@@ -155,11 +166,24 @@ def main() -> None:
     a = encode_all([prep(s) for s in q1], embedder)
     b = encode_all([prep(s) for s in q2], embedder)
     sims = (a * b).sum(axis=1)
+    definitions = {
+        "precision": "TP / (TP + FP): share of would-be cache hits whose questions truly mean the same",
+        "recall": "TP / all duplicate pairs: share of paraphrases the cache would catch",
+        "false_hit_rate": "FP / all non-duplicate pairs: share of different-meaning pairs wrongly matched",
+        "match_rate": "share of all pairs with similarity >= threshold",
+        "rule": "lowest threshold with precision >= target",
+    }
+
+    if args.two_stage:
+        run_two_stage(args, out, q1, q2, y, sims, prep, info, definitions, t0)
+        return
+
     rows = sweep(sims, y)
     chosen = choose(rows, args.target)
 
     data = {
         "benchmark": "qqp_threshold",
+        "mode": "single_stage",
         "smoke_only_not_for_resume": bool(args.smoke),
         **info,
         "embedder": "hash (smoke)" if args.smoke else args.model,
@@ -168,13 +192,7 @@ def main() -> None:
         "chosen": chosen,
         "sweep": rows,
         "encode_seconds": round(time.time() - t0, 1),
-        "definitions": {
-            "precision": "TP / (TP + FP): share of would-be cache hits whose questions truly mean the same",
-            "recall": "TP / all duplicate pairs: share of paraphrases the cache would catch",
-            "false_hit_rate": "FP / all non-duplicate pairs: share of different-meaning pairs wrongly matched",
-            "match_rate": "share of all pairs with similarity >= threshold",
-            "rule": "lowest threshold with precision >= target",
-        },
+        "definitions": definitions,
     }
     save_json(out, "qqp_threshold.json", data)
     plot(rows, chosen, args.target, out / "qqp_threshold.png",
@@ -185,6 +203,72 @@ def main() -> None:
           f"recall {chosen['recall']}, false-hit rate {chosen['false_hit_rate']}{flag}")
     if not args.smoke:
         print(f"-> set SEMANTIC_THRESHOLD={chosen['threshold']} in .env")
+
+
+def run_two_stage(args, out, q1, q2, y, sims, prep, info, definitions, t0) -> None:
+    """Stage 1 fixed (MiniLM >= args.candidate); sweep stage 2 (cross-encoder score)."""
+    import os
+
+    import torch
+
+    from gateway.semantic_cache import CrossEncoderVerifier
+
+    cand = sims >= args.candidate
+    idx = np.flatnonzero(cand)
+    print(f"{len(idx)} of {len(y)} pairs pass stage 1 (MiniLM >= {args.candidate}); scoring them with "
+          f"{args.verify_model}")
+    verifier = CrossEncoderVerifier(args.verify_model)
+    torch.set_num_threads(os.cpu_count() or 1)  # offline benchmark: speed only, results are identical
+    scores = np.full(len(y), -np.inf)  # pairs that fail stage 1 can never be hits
+    t1 = time.time()
+    batch = 128
+    for i in range(0, len(idx), batch):
+        part = idx[i:i + batch]
+        scores[part] = verifier.score([(prep(q2[j]), prep(q1[j])) for j in part])
+        print(f"\r  verified {min(i + batch, len(idx))}/{len(idx)}  ({time.time() - t1:.0f}s)", end="", flush=True)
+    print()
+    s = scores[idx]
+    print(f"  cross-encoder score range on candidates: {s.min():.4f} .. {s.max():.4f}")
+
+    rows = sweep(scores, y, VERIFY_THRESHOLDS)  # hit = passes stage 1 AND score >= t
+    chosen = {"candidate_threshold": args.candidate, "verify_threshold": None,
+              **choose(rows, args.target)}
+    chosen["verify_threshold"] = chosen["threshold"]
+    stage1 = sweep(sims, y, np.array([args.candidate]))[0]  # stage 1 alone = recall ceiling
+
+    data = {
+        "benchmark": "qqp_threshold",
+        "mode": "two_stage",
+        "smoke_only_not_for_resume": False,
+        **info,
+        "embedder": args.model,
+        "verifier": args.verify_model,
+        "verifier_training_note": "cross-encoder/quora-distilroberta-base was trained on QQP train; "
+                                  "this evaluation uses QQP validation pairs only",
+        "duplicate_share": round(float(y.mean()), 4),
+        "target_precision": args.target,
+        "candidate_threshold": args.candidate,
+        "stage1_only_at_candidate": stage1,
+        "chosen": chosen,
+        "sweep": rows,
+        "sweep_variable": "verify_threshold (cross-encoder score), candidate threshold fixed",
+        "candidates_scored": int(len(idx)),
+        "encode_seconds": round(time.time() - t0, 1),
+        "verify_seconds": round(time.time() - t1, 1),
+        "definitions": {**definitions,
+                        "match_rate": "share of all pairs passing BOTH stages",
+                        "rule": "lowest verify threshold with precision >= target (candidate fixed)"},
+    }
+    save_json(out, "qqp_threshold.json", data)
+    plot(rows, chosen, args.target, out / "qqp_threshold.png",
+         f"Two-stage cache on {len(y):,} QQP pairs: MiniLM >= {args.candidate}, then cross-encoder",
+         xlabel="Cross-encoder verify threshold")
+    flag = "" if chosen["target_met"] else "  (target NOT met: showing best precision)"
+    print(f"stage 1 alone at {args.candidate}: precision {stage1['precision']}, recall {stage1['recall']}")
+    print(f"chosen verify threshold {chosen['verify_threshold']}: precision {chosen['precision']}, "
+          f"recall {chosen['recall']}, false-hit rate {chosen['false_hit_rate']}{flag}")
+    print(f"-> set SEMANTIC_CANDIDATE_THRESHOLD={args.candidate} and "
+          f"SEMANTIC_VERIFY_THRESHOLD={chosen['verify_threshold']} in .env")
 
 
 if __name__ == "__main__":

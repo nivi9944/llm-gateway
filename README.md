@@ -23,8 +23,10 @@ flowchart LR
     C -- no --> R429[429 + Retry-After]
     C -- yes --> D{Exact cache<br/>SHA-256 hit?}
     D -- yes --> HIT1[Reply: HIT-EXACT]
-    D -- no --> E{Semantic cache<br/>similarity ≥ threshold?}
-    E -- yes --> HIT2[Reply: HIT-SEMANTIC]
+    D -- no --> E{Semantic cache<br/>MiniLM similarity ≥ 0.85?}
+    E -- yes --> V{Cross-encoder<br/>score ≥ 0.98?}
+    V -- yes --> HIT2[Reply: HIT-SEMANTIC]
+    V -- no --> F
     E -- no --> F[Router]
     F --> G[Gemini<br/>retry ×3, jitter]
     G -- fails / breaker open --> H[Ollama<br/>retry ×3, jitter]
@@ -37,7 +39,7 @@ flowchart LR
 | Auth | `Authorization: Bearer <key>` must be in `GATEWAY_KEYS`, compared in constant time | `gateway/auth.py` |
 | Rate limit | Token bucket per key in Redis. One **Lua script**, so it is atomic across replicas | `gateway/ratelimit.py` |
 | Exact cache | SHA-256 of the messages + every parameter that can change the answer (model, temperature, max_tokens, tools, …) → Redis, with TTL | `gateway/cache.py` |
-| Semantic cache | MiniLM embeds the last user message; FAISS finds the closest earlier one. Matches only among requests with the same parameters and earlier conversation | `gateway/semantic_cache.py` |
+| Semantic cache | Two stages. MiniLM embeds the last user message (requests arriving within 5 ms are batched into one call) and FAISS finds the closest earlier one; then a cross-encoder reads both questions together and must agree before the answer is reused. Matches only among requests with the same parameters and earlier conversation | `gateway/semantic_cache.py` |
 | Router | Retries timeouts / 429 / 5xx with exponential backoff + **full jitter**; falls back to the next provider | `gateway/router.py` |
 | Circuit breaker | 5 failures in a row → skip the provider for 30 s → one test request decides | `gateway/breaker.py` |
 | Metrics | One JSON log line per request; `/metrics-summary` totals; estimated cost | `gateway/metrics.py` |
@@ -54,49 +56,73 @@ this table by `python bench/summarize.py`. Nothing is typed by hand.
 
 <!-- RESULTS:START -->
 
-Measured on: Windows-11-10.0.26200-SP0, 18 logical CPUs, 16.6 GB RAM, Python 3.12.10, 2026-09-24T12:22:38+00:00.
+Measured on: Windows-11-10.0.26200-SP0, 18 logical CPUs, 16.6 GB RAM, Python 3.12.10, 2026-09-24T12:58:48+00:00.
 
 | Metric | Value | Source |
 |---|---|---|
-| Semantic threshold (chosen) | 0.98 (95% target NOT met) | `results/qqp_threshold.json` |
-| Hit precision at threshold | 92.4% | `results/qqp_threshold.json` |
-| Paraphrase recall at threshold | 7.6% | `results/qqp_threshold.json` |
-| False-hit rate (different-meaning pairs matched) | 0.36% | `results/qqp_threshold.json` |
+| Semantic cache: MiniLM candidate / cross-encoder verify threshold | 0.85 / 0.98 | `results/qqp_threshold.json` |
+| Hit precision at threshold | 95.5% | `results/qqp_threshold.json` |
+| Paraphrase recall at threshold | 38.0% | `results/qqp_threshold.json` |
+| False-hit rate (different-meaning pairs matched) | 1.04% | `results/qqp_threshold.json` |
 | QQP pairs evaluated | 20,000 | `results/qqp_threshold.json` |
-| Replay: overall cache hit rate | 22.6% | `results/replay.json` |
-| Replay: exact / semantic hit rate | 20.4% / 2.2% | `results/replay.json` |
-| Replay: semantic hits that were correct | 95.9% | `results/replay.json` |
-| Replay: all cache hits that were correct | 99.6% | `results/replay.json` |
-| Replay: estimated LLM spend saved | 22.5% | `results/replay.json` |
+| Replay: overall cache hit rate | 28.8% | `results/replay.json` |
+| Replay: exact / semantic hit rate | 20.4% / 8.5% | `results/replay.json` |
+| Replay: semantic hits that were correct | 95.0% | `results/replay.json` |
+| Replay: all cache hits that were correct | 98.2% | `results/replay.json` |
+| Replay: paraphrases served from cache | 40.5% | `results/replay.json` |
+| Replay: estimated LLM spend saved | 28.7% | `results/replay.json` |
 | Replay workload mix (unique / near-miss / exact / paraphrase) | 41% / 20% / 20% / 19% | `results/replay.json` |
-| Load: throughput (50 users, 800 ms provider) | 52.3 req/s | `results/load.json` |
-| Load: end-to-end p50 / p95 / p99 | 943 / 1103 / 1274 ms | `results/load.json` |
-| Load: gateway overhead p50 / p95 / p99 (vs direct) | 125.3 / 268.9 / 425.8 ms | `results/load.json` |
-| Load: in-gateway time p95 (log: latency - upstream) | 190.7 ms | `results/load.json` |
+| Load: throughput (50 users, 800 ms provider) | 52.8 req/s | `results/load.json` |
+| Load: end-to-end p50 / p95 / p99 | 925 / 1153 / 1317 ms | `results/load.json` |
+| Load: gateway overhead p50 / p95 / p99 (vs direct) | 117.5 / 332.4 / 490.1 ms | `results/load.json` |
+| Load: in-gateway time p95 (log: latency - upstream) | 210.4 ms | `results/load.json` |
 | Load: success rate | 100.00% | `results/load.json` |
 | Chaos (30% failures): success without / with protection | 71.0% / 100.0% | `results/chaos.json` |
 | Chaos (outage): calls to dead provider, no breaker / breaker | 6,000 / 20 | `results/chaos.json` |
 | Chaos (outage): p95 latency, no breaker / breaker | 872 / 139 ms | `results/chaos.json` |
-| Automated tests passing | 56 of 56 | `results/tests.json` |
+| Automated tests passing | 61 of 61 | `results/tests.json` |
+
+Version history (each column is read from its own results file):
+
+| Metric | v0 original | v1 thread pool | v2 batching | v3 two-stage (final) |
+|---|---|---|---|---|
+| QQP hit precision | 92.4% | 92.4% | 92.4% | 95.5% |
+| QQP paraphrase recall | 7.6% | 7.6% | 7.6% | 38.0% |
+| QQP false-hit rate | 0.36% | 0.36% | 0.36% | 1.04% |
+| Replay hit rate | 22.6% | 22.6% | 22.6% | 28.8% |
+| Replay paraphrases served from cache | 10.8% | 10.8% | 10.8% | 40.5% |
+| Replay semantic hits correct | 95.9% | 95.9% | 95.9% | 95.0% |
+| Replay all hits correct | 99.6% | 99.6% | 99.6% | 98.2% |
+| Replay est. spend saved | 22.5% | 22.5% | 22.5% | 28.7% |
+| Load throughput | 35.3 req/s | 47.3 req/s | 52.3 req/s | 52.8 req/s |
+| Load overhead p50 | 501.3 ms | 215.5 ms | 125.3 ms | 117.5 ms |
+| Load overhead p95 | 1270.1 ms | 529.4 ms | 268.9 ms | 332.4 ms |
+| Load in-gateway time p95 | 584.1 ms | 410.1 ms | 190.7 ms | 210.4 ms |
 
 <!-- RESULTS:END -->
 
 **How to read them**
 
-* **Threshold** — swept 0.80–0.99 on labelled Quora Question Pairs (GLUE QQP, validation split);
-  the chosen value is the lowest one whose hit precision is ≥ 95%.
-* **Replay** — 10,000 requests built from QQP *train* questions (never used for tuning), with a stated
+* **Threshold**: 20,000 labelled Quora Question Pairs (GLUE QQP, validation split). The candidate
+  threshold is fixed at 0.85; the cross-encoder threshold is swept 0.05–0.99 and the lowest one with
+  hit precision ≥ 95% is chosen. The cross-encoder (`cross-encoder/quora-distilroberta-base`) was
+  trained on QQP *train*, so it is evaluated only on validation pairs. The one-stage cache (MiniLM
+  alone, swept 0.70–0.99) never reached 95%; its run is kept in `results/qqp_threshold_v2_single_stage.json`.
+* **Version history**: v0 to v2 changed only speed (thread pool, then batching), so they share the
+  one-stage cache runs. v3 added the cross-encoder. It catches far more paraphrases but also lets a few
+  more wrong matches through (see the "correct" rows), and it costs some latency.
+* **Replay**: 10,000 requests built from QQP *train* questions (never used for tuning), with a stated
   mix of new questions, exact repeats, human-labelled paraphrases and "near-miss" questions that look
   similar but mean something different. Hit rate depends on that mix, which is saved in `replay.json`.
   Every cache hit is checked: it counts as correct only if QQP's labels say the new question and the
   one that produced the cached answer mean the same thing.
-* **Cost** — tokens × the Gemini paid-tier list price in `gateway/config.py`. It is an estimate:
+* **Cost**: tokens × the Gemini paid-tier list price in `gateway/config.py`. It is an estimate:
   free-tier calls really cost 0.
-* **Load** — Locust, 50 users, 60 s, mock provider with 800 ms latency, every request unique (full
+* **Load**: Locust, 50 users, 60 s, mock provider with 800 ms latency, every request unique (full
   path). Overhead = (through gateway) − (straight to the mock) at the same percentile. Requests/s in
   this setup is capped by users ÷ latency (50 ÷ 0.8 s ≈ 62), so it shows the gateway is not the
   bottleneck, not its maximum. For a capacity test: `python bench/load.py --latency-ms 50 --users 200 --out results/capacity`.
-* **Chaos** — 2,000 requests per scenario; the primary fails 30% of the time (or 100%, for the outage
+* **Chaos**: 2,000 requests per scenario; the primary fails 30% of the time (or 100%, for the outage
   scenarios). "Protection" = retries + fallback + breaker.
 
 ---
@@ -125,7 +151,7 @@ Invoke-WebRequest http://localhost:8000/v1/chat/completions -Method Post -Body $
   Select-Object -ExpandProperty Headers
 ```
 
-Or from Python with the official OpenAI SDK — only `base_url` changes:
+Or from Python with the official OpenAI SDK (only `base_url` changes):
 
 ```python
 from openai import OpenAI
@@ -171,8 +197,8 @@ pip install -r requirements-dev.txt
 docker compose up -d redis                 # benchmarks use Redis db 1 on localhost:6379
 
 python bench/test_report.py                # -> results/tests.json
-python bench/qqp_threshold.py              # -> results/qqp_threshold.json + .png  (~5-10 min on CPU)
-python bench/replay.py                     # -> results/replay.json
+python bench/qqp_threshold.py --two-stage  # -> results/qqp_threshold.json + .png  (~5-10 min on CPU)
+python bench/replay.py                     # -> results/replay.json (uses the two-stage values; --no-verify for one stage)
 python bench/load.py                       # -> results/load.json   (~2.5 min)
 python bench/chaos.py                      # -> results/chaos.json  (~1.5 min)
 python bench/summarize.py                  # fills the Results table above
@@ -198,7 +224,9 @@ The important ones:
 |---|---|---|
 | `GATEWAY_KEYS` | `dev-key-1,dev-key-2` | client keys allowed in |
 | `PROVIDER_ORDER` | `gemini,ollama` | providers tried left to right (`mock`, `mock2` for tests) |
-| `SEMANTIC_THRESHOLD` | `0.90` | set from `results/qqp_threshold.json` |
+| `SEMANTIC_VERIFY_ENABLED` | `true` | two-stage semantic cache (false = MiniLM alone) |
+| `SEMANTIC_CANDIDATE_THRESHOLD` / `SEMANTIC_VERIFY_THRESHOLD` | `0.85` / `0.5` | two-stage cut-offs; set from `results/qqp_threshold.json` (this laptop: 0.85 / 0.98) |
+| `SEMANTIC_THRESHOLD` | `0.90` | one-stage cut-off, used only when verify is off (this laptop: 0.98) |
 | `CACHE_TTL_SECONDS` | `86400` | how long answers are kept |
 | `BUCKET_CAPACITY` / `REFILL_PER_SEC` | `10` / `0.1667` | burst size / sustained rate per key |
 | `RETRY_MAX` | `3` | tries per provider |
@@ -222,6 +250,8 @@ tests/          pytest suite (runs offline)
 * No streaming responses yet (`stream: true` returns 400).
 * One Uvicorn worker. To scale: more workers or replicas behind a load balancer, Redis Cluster.
 * Cost figures are estimates at list price, not a bill.
+* The cross-encoder only checks FAISS's single best candidate. If that one is rejected, a second-best
+  match that would have passed is not tried.
 
 See `DECISIONS.md` for why each design choice was made.
 

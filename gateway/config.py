@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     SEMANTIC_THRESHOLD: float = 0.90  # replace with the value from results/qqp_threshold.json
     EMBEDDER: str = "minilm"  # "minilm" (real) or "hash" (tiny stand-in for tests / offline trials)
     EMBED_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # Two-stage semantic cache. When ON, FAISS only proposes a candidate at
+    # SEMANTIC_CANDIDATE_THRESHOLD, and a cross-encoder must score the pair >= SEMANTIC_VERIFY_THRESHOLD.
+    # When OFF, SEMANTIC_THRESHOLD alone decides (the one-stage cache).
+    SEMANTIC_VERIFY_ENABLED: bool = True
+    SEMANTIC_CANDIDATE_THRESHOLD: float = 0.85
+    SEMANTIC_VERIFY_THRESHOLD: float = 0.5  # replace with the value from qqp_threshold.py --two-stage
+    VERIFY_MODEL: str = "cross-encoder/quora-distilroberta-base"
 
     # --- Rate limiting (token bucket per key) ---
     RATE_LIMIT_ENABLED: bool = True

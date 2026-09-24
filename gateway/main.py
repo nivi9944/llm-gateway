@@ -26,7 +26,7 @@ from .config import Settings, get_settings
 from .metrics import Metrics
 from .ratelimit import RateLimiter
 from .router import Router, build_providers
-from .semantic_cache import Embedder, SemanticCache, build_embedder
+from .semantic_cache import CrossEncoderVerifier, Embedder, SemanticCache, Verifier, build_embedder
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("gateway")
@@ -49,6 +49,7 @@ def create_app(
     *,
     redis_client=None,
     embedder: Embedder | None = None,
+    verifier: Verifier | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     sleep=None,
 ) -> FastAPI:
@@ -71,7 +72,12 @@ def create_app(
         semantic = None
         if s.CACHE_ENABLED and s.SEMANTIC_ENABLED:
             emb = embedder or build_embedder(s.EMBEDDER, s.EMBED_MODEL)  # loaded ONCE at startup
-            semantic = SemanticCache(r, emb, s.SEMANTIC_THRESHOLD, s.CACHE_TTL_SECONDS)
+            if s.SEMANTIC_VERIFY_ENABLED:  # two stages: FAISS candidate, then cross-encoder check
+                ver = verifier or CrossEncoderVerifier(s.VERIFY_MODEL)  # also loaded once
+                semantic = SemanticCache(r, emb, s.SEMANTIC_CANDIDATE_THRESHOLD, s.CACHE_TTL_SECONDS,
+                                         verifier=ver, verify_threshold=s.SEMANTIC_VERIFY_THRESHOLD)
+            else:
+                semantic = SemanticCache(r, emb, s.SEMANTIC_THRESHOLD, s.CACHE_TTL_SECONDS)
             n = await semantic.warm_start()
             log.info("semantic cache ready (%d vectors restored)", n)
         router_kwargs = {"sleep": sleep} if sleep else {}
@@ -193,21 +199,25 @@ def create_app(
         # 5. Semantic cache
         sq = None
         similarity = None
+        verify = {}  # X-Verify-Score header, when the stage-2 verifier ran
         if cacheable and c.semantic is not None:
             sq = await c.semantic.embed(body)
             if sq is not None:
                 res = await c.semantic.lookup(sq)
                 similarity = res.similarity
+                if res.verify_score is not None:
+                    verify = {"X-Verify-Score": f"{res.verify_score:.4f}"}
                 if res.response is not None:
                     # Also store under the exact key, so the next identical request is even cheaper.
                     if ekey:
                         await c.exact.set(ekey, res.response)
                     return finish(200, res.response, "HIT-SEMANTIC", "cache", usage=res.response.get("usage"),
-                                  similarity=similarity, key_id=kid)
+                                  similarity=similarity, extra_headers=verify, key_id=kid,
+                                  verify_score=res.verify_score)
 
         # 6. Provider call (retries, fallback, circuit breaker)
         result = await c.router.complete(body, only=forced)
-        extra = {"X-Upstream-Ms": f"{result.upstream_ms:.2f}", "X-Attempts": str(result.attempts)}
+        extra = {"X-Upstream-Ms": f"{result.upstream_ms:.2f}", "X-Attempts": str(result.attempts), **verify}
         if result.status == 503 and result.retry_after_s:
             extra["Retry-After"] = str(max(1, math.ceil(result.retry_after_s)))
 

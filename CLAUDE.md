@@ -28,6 +28,8 @@ python bench/summarize.py                   # results -> README table + draft re
 * Only public data through Gemini (free tier may use prompts for training).
 * Keep tests offline: fake providers via `httpx.MockTransport`, `fakeredis`, `HashEmbedder`.
 * Every new behaviour gets a test. Keep `pytest -q` green.
+* **No em dashes (U+2014) anywhere:** files, code comments, docstrings, commit messages, GitHub text.
+  Use a comma, a colon, parentheses, or a new sentence instead.
 
 ## Map
 | File | Role |

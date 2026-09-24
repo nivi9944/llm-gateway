@@ -54,13 +54,50 @@ Lowest, because a lower threshold catches more paraphrases (more savings) while 
 **Note:** QQP labels are noisy (some "duplicates" are debatable). If no threshold reaches 95%, the
 script says so (`target_met: false`) and reports the best one instead of hiding it.
 
-**Result (laptop run, `results/qqp_threshold.json`, 20,000 sampled QQP validation pairs, MiniLM):**
+**Result (laptop run, now kept as `results/qqp_threshold_v2_single_stage.json`, 20,000 sampled QQP validation pairs, MiniLM):**
 the 95% target was **not met**. The best precision was at threshold **0.98**: precision 0.9238,
 recall 0.0759, false-hit rate 0.0036 (558 true hits, 46 false hits). 0.99 scored lower (0.9195), and
 0.97 fell to 0.8941, so 0.98 is also the pick for a 90% target. We set `SEMANTIC_THRESHOLD=0.98`:
 a wrong cached answer is worse than a cache miss, so we chose the strictest setting and quote its
 real precision instead of changing the data or method. Trade-off: it catches only 7.59% of paraphrases (recall 0.0759);
 MiniLM cannot separate "same meaning" from "similar wording" at 95% on QQP.
+
+## 7a. Two-stage semantic cache: MiniLM finds a candidate, a cross-encoder decides (v3)
+**Why:** MiniLM turns each question into a vector on its own, so it mostly measures shared wording.
+A cross-encoder (`cross-encoder/quora-distilroberta-base`) reads the two questions together and can
+notice the small word that changes the meaning. It is too slow to compare against every cached
+question, so FAISS first proposes the single closest one (similarity ≥ 0.85), and only that pair is
+scored. The answer is reused only if the score is ≥ `SEMANTIC_VERIFY_THRESHOLD`.
+**Tuning:** same 20,000 validation pairs as section 7, candidate threshold fixed at 0.85, verify
+threshold swept 0.05 to 0.99, lowest one with precision ≥ 95% chosen (`qqp_threshold.py --two-stage`).
+**Data note:** this cross-encoder was trained on QQP *train*. We only evaluate it on QQP
+*validation*, and the replay benchmark drops train pairs that share a question with validation, but
+the model has still seen the same kind of Quora questions, so real traffic may score lower.
+**Result (`results/qqp_threshold.json`):** verify threshold **0.98**, precision 0.9549, recall 0.3803,
+false-hit rate 0.0104. The 95% target is met. One stage alone at 0.85 has precision 0.7299 and recall
+0.6116, so 0.6116 is the most the two stages together could ever catch.
+**Replay (`results/replay.json` vs `results/replay_v2_single_stage.json`):** hit rate 0.2882 vs 0.2255,
+paraphrases served from cache 0.4052 vs 0.1079, estimated spend saved 28.66% vs 22.51%. Cost of that:
+semantic hits correct 0.9504 vs 0.9589, and wrong answers served 51 vs 10 (out of 10,000 requests).
+**Load (`results/load_v3_two_stage.json` vs `results/load_v2_batching.json`):** p95 overhead
+332.4 ms vs 268.9 ms (+63.5 ms). In this test every request is unique, so the cross-encoder runs only
+when FAISS finds a close candidate.
+**Decision:** keep it (`SEMANTIC_VERIFY_ENABLED=true`). The rule set in advance was: switch it off if
+recall or hit rate got worse or p95 overhead grew by more than 100 ms. Neither happened.
+**Switch:** `SEMANTIC_VERIFY_ENABLED=false` returns to the one-stage cache (`SEMANTIC_THRESHOLD`).
+A verifier error is treated as a miss, never as an unchecked hit.
+
+## 7b. CPU work on a dedicated thread pool, with micro-batching (v1, v2)
+**v1:** under 50 concurrent users, every `encode()` call tried to use all cores and they fought each
+other. Each torch call is now limited to 1 thread, and the semantic cache has its own 4-thread pool
+(asyncio's shared default pool is also used by other code). 8 workers with 2 threads was tried and
+was slower (p95 overhead 1272.1 ms vs 529.4 ms, `results/load_v1_trial_8workers_2threads.json`),
+so 4 x 1 was kept.
+**v2:** requests that arrive within 5 ms (up to 32) are embedded in ONE `encode()` call, and each
+caller gets its own vector back. One matrix multiply for 32 sentences is much cheaper than 32 small ones.
+**Result (`results/load_v0_original.json` -> `load_v1_threadpool.json` -> `load_v2_batching.json`):**
+p95 overhead 1270.1 -> 529.4 -> 268.9 ms, throughput 35.28 -> 47.26 -> 52.31 req/s.
+**Trade-off:** a lone request can wait up to 5 ms for company. That is small next to an LLM call.
 
 ## 8. Rate limiting: token bucket per key, as a Redis Lua script
 **Why token bucket:** allows short bursts (capacity) while enforcing an average rate (refill).

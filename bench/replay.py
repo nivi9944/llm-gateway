@@ -138,7 +138,7 @@ def build_workload(n: int, mix: dict, dup, non, seed: int) -> list[dict]:
     return sent
 
 
-async def run(args, workload, threshold, embedder_kind, meaning: Meaning):
+async def run(args, workload, threshold, embedder_kind, meaning: Meaning, verify: dict | None = None):
     import httpx
     from asgi_lifespan import LifespanManager
 
@@ -149,6 +149,9 @@ async def run(args, workload, threshold, embedder_kind, meaning: Meaning):
         _env_file=None, GATEWAY_KEYS=BENCH_KEY, REDIS_URL=BENCH_REDIS_URL, PROVIDER_ORDER="mock",
         MOCK_BASE_URL=f"http://127.0.0.1:{args.mock_port}/v1", EMBEDDER=embedder_kind,
         SEMANTIC_THRESHOLD=threshold, RATE_LIMIT_ENABLED=False,
+        SEMANTIC_VERIFY_ENABLED=verify is not None,
+        SEMANTIC_CANDIDATE_THRESHOLD=verify["candidate"] if verify else threshold,
+        SEMANTIC_VERIFY_THRESHOLD=verify["verify"] if verify else 0.5,
     )
     logging.getLogger("gateway.requests").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -228,6 +231,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--threshold", type=float, default=None,
                     help="default: chosen value from results/qqp_threshold.json")
+    ap.add_argument("--no-verify", action="store_true", help="one-stage cache even if a two-stage result exists")
     ap.add_argument("--mock-port", type=int, default=9110)
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--out", default=None)
@@ -238,22 +242,33 @@ def main() -> None:
 
     threshold = args.threshold
     src = "--threshold"
+    verify = None  # {"candidate": .., "verify": ..} when the two-stage cache is used
     if threshold is None:
         f = Path("results/qqp_threshold.json")
         if f.exists() and not args.smoke:
-            threshold, src = json.loads(f.read_text())["chosen"]["threshold"], "results/qqp_threshold.json"
+            chosen = json.loads(f.read_text())["chosen"]
+            if "verify_threshold" in chosen and not args.no_verify:
+                verify = {"candidate": chosen["candidate_threshold"], "verify": chosen["verify_threshold"]}
+                threshold, src = chosen["candidate_threshold"], "results/qqp_threshold.json (two-stage)"
+            elif "verify_threshold" in chosen:  # --no-verify: fall back to the one-stage result
+                single = Path("results/qqp_threshold_v2_single_stage.json")
+                threshold = json.loads(single.read_text())["chosen"]["threshold"]
+                src = str(single).replace("\\", "/")
+            else:
+                threshold, src = chosen["threshold"], "results/qqp_threshold.json"
         else:
             threshold, src = 0.90, "default 0.90 (run qqp_threshold.py first)"
     mix = parse_mix(args.mix)
     dup, non, meaning, info = load_pools(args)
     workload = build_workload(args.n, mix, dup, non, args.seed)
     realised = {k: round(sum(w["kind"] == k for w in workload) / len(workload), 4) for k in KINDS}
-    print(f"{len(workload)} requests, threshold {threshold} ({src}), realised mix {realised}")
+    print(f"{len(workload)} requests, threshold {threshold} ({src}), verify {verify}, realised mix {realised}")
 
     flush_bench_redis()
     mock = start_mock(args.mock_port, latency_ms=0, name="replay-mock")
     try:
-        rows, seconds = asyncio.run(run(args, workload, threshold, "hash" if args.smoke else "minilm", meaning))
+        rows, seconds = asyncio.run(run(args, workload, threshold, "hash" if args.smoke else "minilm", meaning,
+                                        verify))
     finally:
         stop(mock)
     summary = summarise(rows)
@@ -263,6 +278,9 @@ def main() -> None:
         **info,
         "embedder": "hash (smoke)" if args.smoke else "sentence-transformers/all-MiniLM-L6-v2",
         "threshold": threshold, "threshold_source": src,
+        "mode": "two_stage" if verify else "single_stage",
+        "verify": {"candidate_threshold": verify["candidate"], "verify_threshold": verify["verify"],
+                   "model": "cross-encoder/quora-distilroberta-base"} if verify else None,
         "requested_mix": mix, "realised_mix": realised, "seed": args.seed,
         "provider": "mock (0 ms)", "price_basis": "Gemini paid-tier list price from gateway config",
         "seconds": seconds,

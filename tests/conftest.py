@@ -33,6 +33,7 @@ def make_settings(**overrides) -> Settings:
         MOCK2_BASE_URL=f"http://{BACKUP}/v1",
         EMBEDDER="hash",
         SEMANTIC_THRESHOLD=0.80,
+        SEMANTIC_VERIFY_ENABLED=False,  # one-stage by default; verifier tests pass a fake verifier
         BUCKET_CAPACITY=1000,
         REFILL_PER_SEC=1000,
         RETRY_MAX=3,
@@ -101,12 +102,12 @@ async def fresh_redis():
 
 @asynccontextmanager
 async def gateway(settings: Settings | None = None, upstream: FakeUpstream | None = None,
-                  redis_client=None, sleep: Callable | None = None, embedder=None):
+                  redis_client=None, sleep: Callable | None = None, embedder=None, verifier=None):
     settings = settings or make_settings()
     upstream = upstream or FakeUpstream()
     r = redis_client if redis_client is not None else await fresh_redis()
     app = create_app(settings, redis_client=r, transport=httpx.MockTransport(upstream.handler),
-                     sleep=sleep, embedder=embedder)
+                     sleep=sleep, embedder=embedder, verifier=verifier)
     async with LifespanManager(app) as manager:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.app),
                                      base_url="http://gateway") as client:

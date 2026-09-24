@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-09-24T12:12:25+00:00",
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+    "cpu_count": 18,
+    "python": "3.12.10",
+    "ram_gb": 16.6,
+    "git_commit": null
+  },
+  "benchmark": "tests",
+  "total": 52,
+  "passed": 52,
+  "failed": 0,
+  "skipped": 0,
+  "seconds": 23.01
+}

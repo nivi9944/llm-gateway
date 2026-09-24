@@ -1,0 +1,42 @@
+# docker compose up -d   -> gateway on http://localhost:8000, Redis on localhost:6379
+# Ollama is NOT in here: it runs on your Windows host and the gateway reaches it through
+# host.docker.internal:11434.
+services:
+  gateway:
+    build: .
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"   # if port 8000 is busy on Windows, change to "8080:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # needed on Linux; harmless on Docker Desktop
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"   # exposed so benchmarks running on the host can use it
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  mock-provider:
+    build: .
+    command: ["uvicorn", "mock_provider.app:app", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      MOCK_LATENCY_MS: ${MOCK_LATENCY_MS:-800}
+      MOCK_FAIL_RATE: ${MOCK_FAIL_RATE:-0.0}
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health')"]
+      interval: 15s
+      timeout: 3s
+      retries: 3

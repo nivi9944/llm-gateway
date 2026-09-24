@@ -1,0 +1,123 @@
+{
+  "generated_at": "2026-09-24T11:57:23+00:00",
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+    "cpu_count": 18,
+    "python": "3.12.10",
+    "ram_gb": 16.6,
+    "git_commit": null
+  },
+  "benchmark": "chaos",
+  "setup": {
+    "requests_per_scenario": 2000,
+    "concurrency": 20,
+    "provider_latency_ms": 50,
+    "cache": "off",
+    "seed": 42,
+    "retry_policy": "full-jitter backoff, base 0.25 s, cap 4 s",
+    "breaker": "opens after 5 consecutive failures, 30 s cooldown"
+  },
+  "headline": {
+    "primary_failure_rate": 0.3,
+    "success_pct_without_protection": 70.95,
+    "success_pct_with_protection": 100.0
+  },
+  "breaker_effect_during_outage": {
+    "primary_calls_without_breaker": 6000,
+    "primary_calls_with_breaker": 20,
+    "p95_ms_without_breaker": 871.51,
+    "p95_ms_with_breaker": 138.71
+  },
+  "scenarios": [
+    {
+      "name": "flaky_no_protection",
+      "fail_rate": 0.3,
+      "order": "mock",
+      "retry_max": 1,
+      "breaker": false,
+      "requests": 2000,
+      "success_pct": 70.95,
+      "status_counts": {
+        "200": 1419,
+        "502": 581
+      },
+      "latency_ms": {
+        "p50": 78.21,
+        "p95": 101.13,
+        "p99": 112.74
+      },
+      "avg_provider_attempts": 1.0,
+      "primary_calls": 2000,
+      "primary_failures": 581,
+      "fallback_calls": 0,
+      "wall_seconds": 8.0
+    },
+    {
+      "name": "flaky_protected",
+      "fail_rate": 0.3,
+      "order": "mock,mock2",
+      "retry_max": 3,
+      "breaker": true,
+      "requests": 2000,
+      "success_pct": 100.0,
+      "status_counts": {
+        "200": 2000
+      },
+      "latency_ms": {
+        "p50": 75.29,
+        "p95": 499.21,
+        "p99": 744.01
+      },
+      "avg_provider_attempts": 1.395,
+      "primary_calls": 2733,
+      "primary_failures": 791,
+      "fallback_calls": 58,
+      "wall_seconds": 15.2
+    },
+    {
+      "name": "outage_no_breaker",
+      "fail_rate": 1.0,
+      "order": "mock,mock2",
+      "retry_max": 3,
+      "breaker": false,
+      "requests": 2000,
+      "success_pct": 100.0,
+      "status_counts": {
+        "200": 2000
+      },
+      "latency_ms": {
+        "p50": 601.16,
+        "p95": 871.51,
+        "p99": 933.89
+      },
+      "avg_provider_attempts": 4.0,
+      "primary_calls": 6000,
+      "primary_failures": 6000,
+      "fallback_calls": 2000,
+      "wall_seconds": 61.1
+    },
+    {
+      "name": "outage_protected",
+      "fail_rate": 1.0,
+      "order": "mock,mock2",
+      "retry_max": 3,
+      "breaker": true,
+      "requests": 2000,
+      "success_pct": 100.0,
+      "status_counts": {
+        "200": 2000
+      },
+      "latency_ms": {
+        "p50": 79.6,
+        "p95": 138.71,
+        "p99": 187.32
+      },
+      "avg_provider_attempts": 1.01,
+      "primary_calls": 20,
+      "primary_failures": 20,
+      "fallback_calls": 2000,
+      "wall_seconds": 8.9
+    }
+  ]
+}

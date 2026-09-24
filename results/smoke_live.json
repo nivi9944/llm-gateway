@@ -1,0 +1,87 @@
+{
+  "generated_at": "2026-09-24T12:11:51+00:00",
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+    "cpu_count": 18,
+    "python": "3.12.10",
+    "ram_gb": 16.6,
+    "git_commit": null
+  },
+  "benchmark": "smoke_live",
+  "steps": [
+    {
+      "question": "[check 3684] In one sentence, what is a token bucket rate limiter?",
+      "forced": null,
+      "status": 200,
+      "X-Cache": "MISS",
+      "X-Provider": "gemini",
+      "X-Similarity": "0.9400",
+      "X-Latency-Ms": "6353.60",
+      "answer": "[check 3684] A token bucket rate limiter is an algorithm that controls network or API traffic by continuously adding tokens to a fixed-capacity bucket at a set rate, allowing incoming requests to proc"
+    },
+    {
+      "question": "[check 3684] In one sentence, what is exponential backoff?",
+      "forced": "ollama",
+      "status": 200,
+      "X-Cache": "MISS",
+      "X-Provider": "ollama",
+      "X-Similarity": "0.9176",
+      "X-Latency-Ms": "25642.64",
+      "answer": "Exponential backoff is a strategy that involves waiting for progressively longer periods between retries of a request or operation, typically doubling the wait time after each failure."
+    },
+    {
+      "question": "[check 3684] In one sentence, what is a token bucket rate limiter?",
+      "forced": null,
+      "status": 200,
+      "X-Cache": "HIT-EXACT",
+      "X-Provider": "cache",
+      "X-Similarity": null,
+      "X-Latency-Ms": "15.41",
+      "answer": "[check 3684] A token bucket rate limiter is an algorithm that controls network or API traffic by continuously adding tokens to a fixed-capacity bucket at a set rate, allowing incoming requests to proc"
+    },
+    {
+      "question": "[check 3684] In one sentence, what does a token-bucket rate limiter do?",
+      "forced": null,
+      "status": 200,
+      "X-Cache": "MISS",
+      "X-Provider": "gemini",
+      "X-Similarity": "0.9745",
+      "X-Latency-Ms": "7037.18",
+      "answer": "A token-bucket rate limiter regulates API or network traffic by replenishing tokens into a fixed-capacity bucket at a constant rate and requiring each incoming request to consume a token, allowing bri"
+    }
+  ],
+  "checks": {
+    "gemini_answered": true,
+    "ollama_answered_when_forced": true,
+    "repeat_was_exact_hit": true,
+    "paraphrase_was_semantic_hit": false
+  },
+  "metrics_summary": {
+    "uptime_s": 42.6,
+    "requests": 4,
+    "by_cache": {
+      "MISS": 3,
+      "HIT-EXACT": 1
+    },
+    "by_provider": {
+      "gemini": 2,
+      "ollama": 1,
+      "cache": 1
+    },
+    "by_status": {
+      "200": 4
+    },
+    "hit_rate": 0.25,
+    "est_cost_usd": 0.000563,
+    "est_saved_usd": 0.000207,
+    "est_saved_pct": 26.87,
+    "latency_ms": {
+      "p50": 6695.39,
+      "p95": 22851.82,
+      "p99": 25084.48,
+      "window": 4
+    },
+    "cost_note": "estimated at Gemini paid-tier list price; free-tier calls actually cost 0"
+  }
+}

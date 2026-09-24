@@ -1,0 +1,10 @@
+.env
+.venv
+venv
+__pycache__
+.pytest_cache
+.git
+bench/logs
+trial_results
+results
+.hf-cache

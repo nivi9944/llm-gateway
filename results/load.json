@@ -1,0 +1,65 @@
+{
+  "generated_at": "2026-09-24T12:05:52+00:00",
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+    "cpu_count": 18,
+    "python": "3.12.10",
+    "ram_gb": 16.6,
+    "git_commit": null
+  },
+  "benchmark": "load",
+  "trial_only_not_for_resume": false,
+  "setup": {
+    "tool": "locust (headless)",
+    "users": 50,
+    "seconds": 60,
+    "spawn_rate_per_s": 5,
+    "ramp_up_excluded": true,
+    "mock_latency_ms": 800,
+    "embedder": "minilm",
+    "cache": "every request unique -> all MISS (full path)",
+    "gateway_workers": 1,
+    "rate_limiter": "on (limit set high)"
+  },
+  "direct_to_mock": {
+    "requests": 3795,
+    "requests_recorded_exact": 3795,
+    "failures": 0,
+    "success_pct": 100.0,
+    "rps": 61.74,
+    "p50_ms": 809.3,
+    "p95_ms": 823.88,
+    "p99_ms": 830.11,
+    "avg_ms": 809.2,
+    "percentile_source": "exact per-request times (3795 successful requests)"
+  },
+  "through_gateway": {
+    "requests": 2898,
+    "requests_recorded_exact": 2916,
+    "failures": 0,
+    "success_pct": 100.0,
+    "rps": 47.26,
+    "p50_ms": 1024.79,
+    "p95_ms": 1353.24,
+    "p99_ms": 1535.96,
+    "avg_ms": 1058.4,
+    "percentile_source": "exact per-request times (2916 successful requests)"
+  },
+  "gateway_overhead_ms": {
+    "p50": 215.5,
+    "p95": 529.4,
+    "p99": 705.9,
+    "method": "through_gateway percentile minus direct_to_mock percentile (same load)"
+  },
+  "gateway_cache_status_counts": {
+    "MISS": 3159
+  },
+  "gateway_internal_overhead_ms": {
+    "requests": 3159,
+    "p50": 159.84,
+    "p95": 410.13,
+    "p99": 508.11,
+    "method": "per request, from the gateway log: latency_ms - upstream_ms"
+  }
+}

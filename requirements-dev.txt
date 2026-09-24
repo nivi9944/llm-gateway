@@ -1,0 +1,10 @@
+# Everything for tests and benchmarks (install this one on your laptop)
+-r requirements.txt
+pytest>=8.0
+pytest-asyncio>=0.24
+fakeredis[lua]>=2.26
+asgi-lifespan>=2.1
+locust>=2.30
+datasets>=2.20
+matplotlib>=3.8
+psutil>=5.9

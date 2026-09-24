@@ -2,6 +2,16 @@
 
 An OpenAI-compatible gateway that makes LLM calls cheaper, safer and more reliable, with a two-stage semantic cache, per-key rate limiting and automatic provider fallback.
 
+**Highlights**
+
+<!-- HIGHLIGHTS:START -->
+
+- Two-stage semantic cache (MiniLM + cross-encoder): 95.5% hit precision, 5x more paraphrases caught than embedding alone.
+- 28.7% estimated LLM spend saved on a 10,000-request replay, with 98.2% of cached answers correct.
+- 100% success at 30% provider faults (vs 71% unprotected); p95 gateway overhead cut 73% with batching.
+
+<!-- HIGHLIGHTS:END -->
+
 [![CI](https://github.com/nivi9944/llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/nivi9944/llm-gateway/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -297,8 +307,8 @@ All settings are environment variables (see `.env.example` and `gateway/config.p
 | `OLLAMA_MODEL` | `qwen2.5:7b` | local fallback model |
 | `SEMANTIC_VERIFY_ENABLED` | `true` | two-stage semantic cache (`false` = embedding only) |
 | `SEMANTIC_CANDIDATE_THRESHOLD` | `0.85` | stage 1: minimum MiniLM similarity for a candidate |
-| `SEMANTIC_VERIFY_THRESHOLD` | `0.5` (`.env.example`: `0.98`) | stage 2: minimum cross-encoder score; set from `results/qqp_threshold.json` |
-| `SEMANTIC_THRESHOLD` | `0.90` (`.env.example`: `0.98`) | embedding-only threshold, used when verification is off |
+| `SEMANTIC_VERIFY_THRESHOLD` | `0.98` | stage 2: minimum cross-encoder score (from `results/qqp_threshold.json`) |
+| `SEMANTIC_THRESHOLD` | `0.98` | embedding-only threshold, used when verification is off (from `results/qqp_threshold_single_stage.json`) |
 | `CACHE_TTL_SECONDS` | `86400` | how long answers are kept |
 | `BUCKET_CAPACITY` / `REFILL_PER_SEC` | `10` / `0.1667` | burst size / sustained rate per key |
 | `RETRY_MAX` | `3` | tries per provider |

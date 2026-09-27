@@ -4,6 +4,9 @@ from gateway.router import backoff_s
 
 from .conftest import AUTH, BACKUP, PRIMARY, chat, gateway, make_settings
 
+MISTRAL = "mistral.test"
+NVIDIA = "nvidia.test"
+
 
 class SleepRecorder:
     def __init__(self):
@@ -92,6 +95,52 @@ async def test_force_provider_header(upstream):
         assert r.headers["X-Provider"] == "mock2" and upstream.calls[PRIMARY] == 0
         bad = await post(gw, headers={"X-Provider-Force": "nope"})
         assert bad.status_code == 400
+
+
+async def test_force_only_provider_is_never_a_fallback(upstream):
+    upstream.set(PRIMARY, 503)
+    upstream.set(BACKUP, 503)
+    upstream.set(MISTRAL, 200)
+    s = make_settings(MISTRAL_API_KEY="k", MISTRAL_BASE_URL=f"http://{MISTRAL}/v1")
+    async with gateway(s, upstream) as gw:
+        r = await post(gw)
+        assert r.status_code == 502 and upstream.calls.get(MISTRAL, 0) == 0
+        r = await post(gw, headers={"X-Provider-Force": "mistral"})
+        assert r.status_code == 200 and r.headers["X-Provider"] == "mistral"
+        assert upstream.bodies[-1]["model"] == "mistral-small-2603"  # request model not allowed: default
+
+
+async def test_mistral_forwards_only_allowed_model_names(upstream):
+    upstream.set(MISTRAL, 200)
+    s = make_settings(MISTRAL_API_KEY="k", MISTRAL_BASE_URL=f"http://{MISTRAL}/v1")
+    async with gateway(s, upstream) as gw:
+        force = {"X-Provider-Force": "mistral"}
+        await post(gw, chat(model="mistral-medium-latest", temperature=0.5), headers=force)
+        assert upstream.bodies[-1]["model"] == "mistral-medium-latest"
+        await post(gw, chat(model="mistral-large-latest", temperature=0.5), headers=force)
+        assert upstream.bodies[-1]["model"] == "mistral-small-2603"
+
+
+async def test_nvidia_is_force_only_with_its_own_allowlist(upstream):
+    upstream.set(PRIMARY, 503)
+    upstream.set(BACKUP, 503)
+    upstream.set(NVIDIA, 200)
+    s = make_settings(NVIDIA_API_KEY="k", NVIDIA_BASE_URL=f"http://{NVIDIA}/v1")
+    async with gateway(s, upstream) as gw:
+        r = await post(gw)
+        assert r.status_code == 502 and upstream.calls.get(NVIDIA, 0) == 0  # never a fallback
+        force = {"X-Provider-Force": "nvidia"}
+        r = await post(gw, chat(model="deepseek-ai/deepseek-v4.1-flash", temperature=0.5), headers=force)
+        assert r.status_code == 200 and r.headers["X-Provider"] == "nvidia"
+        assert upstream.bodies[-1]["model"] == "deepseek-ai/deepseek-v4.1-flash"
+        await post(gw, chat(model="mistral-small-2603", temperature=0.5), headers=force)  # not on nvidia's list
+        assert upstream.bodies[-1]["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
+
+
+async def test_mistral_without_key_is_not_configured(upstream):
+    async with gateway(upstream=upstream) as gw:
+        r = await post(gw, headers={"X-Provider-Force": "mistral"})
+        assert r.status_code == 400
 
 
 async def test_provider_gets_its_own_model_name(upstream):

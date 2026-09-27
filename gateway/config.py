@@ -26,6 +26,19 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     GEMINI_MODEL: str = "gemini-3.6-flash"
+    # Mistral is force-only: reachable with the X-Provider-Force: mistral header, never used as a fallback
+    # unless it is listed in PROVIDER_ORDER. The free plan only has limits for exact model names, so a
+    # request's own model is forwarded when it is in MISTRAL_ALLOWED_MODELS; otherwise MISTRAL_MODEL is used.
+    MISTRAL_API_KEY: str = ""
+    MISTRAL_BASE_URL: str = "https://api.mistral.ai/v1"
+    MISTRAL_MODEL: str = "mistral-small-2603"
+    MISTRAL_ALLOWED_MODELS: str = "mistral-small-2603,mistral-medium-latest"
+    # NVIDIA API catalog (build.nvidia.com, free tier): force-only in the same way as Mistral.
+    NVIDIA_API_KEY: str = ""
+    NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
+    NVIDIA_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b"
+    NVIDIA_ALLOWED_MODELS: str = ("nvidia/nemotron-3-ultra-550b-a55b,nvidia/nemotron-3-super-120b-a12b,"
+                                  "deepseek-ai/deepseek-v4.1-flash,moonshotai/kimi-k3")
     OLLAMA_BASE_URL: str = "http://host.docker.internal:11434/v1"
     OLLAMA_MODEL: str = "qwen2.5:7b"
     MOCK_BASE_URL: str = "http://mock-provider:9000/v1"

@@ -28,6 +28,8 @@ log = logging.getLogger("gateway.router")
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 # The client sent a bad request: every provider would reject it too, so return it as-is.
 CLIENT_ERROR_STATUS = {400, 413, 422}
+NEEDS_KEY = {"gemini", "mistral", "nvidia"}
+FORCE_ONLY = ("mistral", "nvidia")
 
 
 @dataclass
@@ -37,6 +39,11 @@ class Provider:
     model: str
     api_key: str = ""
     breaker: CircuitBreaker | None = None
+    fallback: bool = True  # False = only reachable with X-Provider-Force
+    allowed_models: frozenset = frozenset()  # request model names forwarded as-is (else `model` is used)
+
+    def model_for(self, requested) -> str:
+        return requested if requested in self.allowed_models else self.model
 
     @property
     def url(self) -> str:
@@ -57,21 +64,32 @@ class RouteResult:
 def build_providers(s: Settings) -> list[Provider]:
     catalogue = {
         "gemini": (s.GEMINI_BASE_URL, s.GEMINI_MODEL, s.GEMINI_API_KEY),
+        "mistral": (s.MISTRAL_BASE_URL, s.MISTRAL_MODEL, s.MISTRAL_API_KEY),
+        "nvidia": (s.NVIDIA_BASE_URL, s.NVIDIA_MODEL, s.NVIDIA_API_KEY),
         "ollama": (s.OLLAMA_BASE_URL, s.OLLAMA_MODEL, ""),
         "mock": (s.MOCK_BASE_URL, s.MOCK_MODEL, ""),
         "mock2": (s.MOCK2_BASE_URL, s.MOCK2_MODEL, ""),
     }
+    allowed_models = {"mistral": s.MISTRAL_ALLOWED_MODELS, "nvidia": s.NVIDIA_ALLOWED_MODELS}
     providers = []
     for name in s.provider_order:
         if name not in catalogue:
             log.warning("unknown provider %r in PROVIDER_ORDER, ignoring", name)
             continue
         base, model, key = catalogue[name]
-        if name == "gemini" and not key:
-            log.warning("GEMINI_API_KEY is empty, skipping gemini")
+        if name in NEEDS_KEY and not key:
+            log.warning("%s_API_KEY is empty, skipping %s", name.upper(), name)
             continue
         breaker = CircuitBreaker(s.BREAKER_FAILS, s.BREAKER_COOLDOWN_S) if s.BREAKER_ENABLED else None
         providers.append(Provider(name, base, model, key, breaker))
+    # force-only providers: configured (key set) but not in PROVIDER_ORDER, so the fallback chain and the
+    # benchmarks are unchanged; a client reaches them only with X-Provider-Force
+    for name in FORCE_ONLY:
+        base, model, key = catalogue[name]
+        if key and name not in s.provider_order:
+            breaker = CircuitBreaker(s.BREAKER_FAILS, s.BREAKER_COOLDOWN_S) if s.BREAKER_ENABLED else None
+            allowed = frozenset(m.strip() for m in allowed_models[name].split(",") if m.strip())
+            providers.append(Provider(name, base, model, key, breaker, fallback=False, allowed_models=allowed))
     return providers
 
 
@@ -98,7 +116,7 @@ class Router:
         self._sleep = sleep  # injectable so tests don't really wait
 
     async def complete(self, body: dict, only: str | None = None) -> RouteResult:
-        providers = [p for p in self.providers if only is None or p.name == only]
+        providers = [p for p in self.providers if (p.name == only if only else p.fallback)]
         if not providers:
             return RouteResult(400, _err(f"provider {only!r} is not configured", "invalid_request_error"), None)
 
@@ -110,7 +128,7 @@ class Router:
         min_retry_after = None
 
         for p in providers:
-            payload = dict(body, model=p.model)  # each provider gets its own model name
+            payload = dict(body, model=p.model_for(body.get("model")))  # each provider gets its own model name
             payload.pop("stream", None)
             for attempt in range(self.retry_max):
                 if p.breaker is not None and not p.breaker.allow():

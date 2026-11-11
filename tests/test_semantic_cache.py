@@ -80,8 +80,8 @@ async def test_batcher_combines_concurrent_calls_into_one_encode():
         batcher = EmbedBatcher(emb.encode, pool)
         texts = [f"question number {i}" for i in range(10)]
         vecs = await asyncio.gather(*(batcher.embed(t) for t in texts))
-    assert emb.calls == [10]  # ten callers, ONE encode()
-    for t, v in zip(texts, vecs):  # and each caller got its own vector back
+    assert emb.calls == [10]  # ten callers, one encode()
+    for t, v in zip(texts, vecs):  # each caller got its own vector back
         assert (v == emb.encode([t])[0]).all()
 
 
@@ -104,7 +104,7 @@ async def test_batcher_full_batch_is_sent_without_waiting():
 
     emb = CountingEmbedder()
     with ThreadPoolExecutor(2) as pool:
-        batcher = EmbedBatcher(emb.encode, pool, max_wait_s=10, max_size=4)  # timer would never fire
+        batcher = EmbedBatcher(emb.encode, pool, max_wait_s=10, max_size=4)  # the timer would never fire in time
         await asyncio.wait_for(asyncio.gather(*(batcher.embed(f"q{i}") for i in range(8))), timeout=2)
     assert emb.calls == [4, 4]
 
@@ -129,7 +129,7 @@ async def test_warm_start_rebuilds_index_from_redis():
     r = await fresh_redis()
     async with gateway(redis_client=r) as gw:
         await post(gw, chat("How do I learn Python quickly?"))
-    # "Restart" the gateway with the same Redis: FAISS is empty in memory, then rebuilt.
+    # Restart the gateway on the same Redis: the in-memory FAISS index starts empty and is rebuilt.
     async with gateway(redis_client=r) as gw2:
         assert (await gw2.get("/health")).json()["semantic_vectors"] == 1
         resp = await post(gw2, chat("How can I learn Python quickly?"))
@@ -155,8 +155,10 @@ async def test_different_max_tokens_never_matches():
 
 
 async def test_reused_id_after_redis_data_loss_is_not_trusted():
-    """If Redis loses data, the id counter restarts and FAISS may point an old id at a NEW entry.
-    The lookup must notice the entry doesn't belong to this question."""
+    """After Redis data loss the id counter restarts, so FAISS may map an old id to a new entry.
+
+    The lookup must detect that the entry does not belong to this question.
+    """
     r = await fresh_redis()
     cache = SemanticCache(r, HashEmbedder(), threshold=0.8, ttl_s=3600)
     q_france = await cache.embed(chat("What is the capital of France?"))
@@ -170,12 +172,12 @@ async def test_reused_id_after_redis_data_loss_is_not_trusted():
 
 @pytest.mark.slow
 async def test_real_minilm_paraphrase_vs_unrelated():
-    """Runs with the real model (on your laptop / in CI). Skipped if it can't be downloaded."""
+    """Run against the real MiniLM model. Skipped if the model cannot be downloaded."""
     try:
         from gateway.semantic_cache import MiniLMEmbedder
 
         emb = MiniLMEmbedder("sentence-transformers/all-MiniLM-L6-v2")
-    except Exception as exc:  # no internet / model not available
+    except Exception as exc:  # no network, or the model is unavailable
         pytest.skip(f"MiniLM unavailable: {exc}")
     v = emb.encode(["How do I learn Python quickly?", "What is the fastest way to learn Python?",
                     "What is the boiling point of water?"])

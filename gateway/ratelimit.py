@@ -1,13 +1,12 @@
 """Token-bucket rate limiter, one bucket per API key, stored in Redis.
 
-Picture a bucket that holds BUCKET_CAPACITY tokens and refills at REFILL_PER_SEC.
-Each request takes one token. Empty bucket -> 429 Too Many Requests.
+Each bucket holds up to BUCKET_CAPACITY tokens and refills at REFILL_PER_SEC. A request
+takes one token; an empty bucket means 429 Too Many Requests.
 
-Why a Lua script? "Read tokens, compute, write tokens" is three steps. If two gateway
-replicas did those steps at the same time, both could read "1 token left" and both let a
-request through. Redis runs a Lua script as ONE atomic step, so that race can't happen.
-The script also reads Redis's own clock (TIME), so replicas with slightly different
-clocks still agree.
+The read, refill and write run in a Lua script because Redis executes a script atomically.
+Done as separate commands, two gateway replicas could both read "1 token left" and both
+let a request through. The script also uses Redis's own clock (TIME), so replicas with
+slightly different clocks still agree.
 """
 from __future__ import annotations
 
@@ -62,7 +61,7 @@ class RateDecision:
     allowed: bool
     remaining: float
     retry_after_s: float
-    degraded: bool = False  # True when Redis failed and we let the request through
+    degraded: bool = False  # True when Redis failed and the request was let through
 
 
 class RateLimiter:

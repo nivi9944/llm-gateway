@@ -1,19 +1,20 @@
-"""Semantic cache: reuse an answer when a NEW question MEANS the same as an old one.
+"""Semantic cache: reuse a stored answer when a new question means the same as an old one.
 
 "How do I learn Python fast?" and "Quickest way to learn Python?" share few exact words,
-so the exact cache misses. Here we turn the question into a vector (an "embedding") with
-MiniLM. Similar meanings give vectors pointing in similar directions. FAISS finds the
-closest stored vector; if cosine similarity >= SEMANTIC_THRESHOLD we reuse its answer.
+so the exact cache misses them. The question is embedded with MiniLM, and FAISS finds the
+closest stored vector by cosine similarity. In one-stage mode a similarity >= SEMANTIC_THRESHOLD
+is a hit. In two-stage mode FAISS only proposes a candidate (SEMANTIC_CANDIDATE_THRESHOLD)
+and a cross-encoder must confirm the pair (SEMANTIC_VERIFY_THRESHOLD).
 
-Safety rules that keep wrong answers out:
-  * only the LAST user message is embedded, and matches are only searched among requests
-    with the same model and the same earlier conversation (the "namespace"), so a question
+Guards against serving a wrong answer:
+  * only the last user message is embedded, and matches are searched only among requests
+    with the same model and the same earlier conversation (the namespace), so a question
     under a different system prompt never matches;
-  * the threshold is picked from labelled data (bench/qqp_threshold.py);
+  * thresholds are chosen from labelled data (bench/qqp_threshold.py);
   * only temperature-0 requests are cached (checked in main.py), and entries expire (TTL).
 
-Storage split: FAISS (in memory) holds vectors for fast search; Redis holds the answers
-(and a copy of each vector, so a restarted gateway can rebuild its FAISS index).
+FAISS (in memory) holds the vectors for search. Redis holds the answers plus a copy of each
+vector, so a restarted gateway can rebuild its FAISS index.
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ log = logging.getLogger("gateway.semantic")
 ID_COUNTER_KEY = "semid:next"
 ENTRY_PREFIX = "sem:"
 # CPU work (embedding + FAISS search) runs on this many dedicated threads, each torch call on
-# TORCH_THREADS cores. Many small parallel requests beat one request grabbing every core.
+# TORCH_THREADS cores. Many small requests in parallel do better than one request using every core.
 POOL_WORKERS = 4
 TORCH_THREADS = 1
 
@@ -52,7 +53,7 @@ class Embedder(Protocol):
 
 
 class MiniLMEmbedder:
-    """The real embedder: sentence-transformers/all-MiniLM-L6-v2 (384-dim, CPU friendly)."""
+    """Production embedder: sentence-transformers/all-MiniLM-L6-v2 (384-dim, runs well on CPU)."""
 
     dim = 384
 
@@ -60,8 +61,8 @@ class MiniLMEmbedder:
         import torch
         from sentence_transformers import SentenceTransformer  # heavy import, done once
 
-        # Without this, every encode() tries to use ALL cores; with several requests in
-        # parallel the threads fight each other and latency explodes under load.
+        # By default every encode() uses all cores. With several requests in parallel the
+        # threads contend with each other and latency climbs sharply under load.
         torch.set_num_threads(TORCH_THREADS)
 
         self.model = SentenceTransformer(model_name, device="cpu")
@@ -72,10 +73,10 @@ class MiniLMEmbedder:
 
 
 class HashEmbedder:
-    """A tiny, dependency-free stand-in used by unit tests and offline trial runs.
+    """Small dependency-free embedder for unit tests and offline trial runs.
 
-    Bag-of-words with the "hashing trick": each word adds +-1 to one of 384 slots.
-    It understands shared WORDS, not meaning, so it is NOT used for real numbers.
+    Bag-of-words with the hashing trick: each word adds +-1 to one of 384 slots.
+    It only captures shared words, so it is never used for reported results.
     """
 
     dim = 384
@@ -106,11 +107,11 @@ class Verifier(Protocol):
 
 
 class CrossEncoderVerifier:
-    """Stage 2 of the semantic cache: a cross-encoder reads BOTH questions together.
+    """Stage 2 of the semantic cache: a cross-encoder that reads both questions together.
 
-    MiniLM (stage 1) turns each question into a vector separately, so it mostly sees shared
-    wording. A cross-encoder looks at the pair at once and can notice small words that flip the
-    meaning ("with" vs "without"). It is slower, so it only checks FAISS's single best candidate.
+    MiniLM (stage 1) embeds each question on its own, so it mostly reflects shared wording.
+    A cross-encoder scores the pair jointly and can catch small words that flip the meaning
+    ("with" vs "without"). It is slower, so it only checks the single best FAISS candidate.
     """
 
     def __init__(self, model_name: str):
@@ -121,13 +122,13 @@ class CrossEncoderVerifier:
         self.model = CrossEncoder(model_name, device="cpu")
 
     def score(self, pairs: list[tuple[str, str]]) -> list[float]:
-        # This model has one output passed through a sigmoid, so scores are already 0..1.
+        # This model has a single sigmoid output, so scores are already in 0..1.
         return [float(s) for s in self.model.predict(pairs, convert_to_numpy=True, show_progress_bar=False)]
 
 
 # ---------------------------------------------------------------- batching
 class EmbedBatcher:
-    """Micro-batching: combine embedding requests that arrive close together into ONE encode().
+    """Micro-batcher that merges embedding requests arriving close together into one encode().
 
     Encoding 32 sentences in one call costs far less than 32 separate calls (the model runs
     one matrix multiply instead of 32 small ones). Each caller waits at most `max_wait_s`
@@ -168,9 +169,9 @@ class EmbedBatcher:
         loop = asyncio.get_running_loop()
         try:
             vecs = await loop.run_in_executor(self._pool, self._encode, [text for text, _ in batch])
-        except Exception as exc:  # hand the SAME error to everyone who was waiting
+        except Exception as exc:  # every waiting caller gets the same error
             for _, fut in batch:
-                if not fut.done():  # a caller may have given up (cancelled) meanwhile
+                if not fut.done():  # the caller may have been cancelled meanwhile
                     fut.set_exception(exc)
             return
         for (_, fut), vec in zip(batch, vecs):
@@ -197,7 +198,7 @@ class SemanticResult:
 def build_query_parts(body: dict) -> tuple[str, str] | None:
     """Return (namespace, text) or None if this request can't use the semantic cache.
 
-    namespace = hash of everything EXCEPT the last user message (model, parameters, tools,
+    namespace = hash of everything except the last user message (model, parameters, tools,
     system prompt, earlier turns). Only requests with the same namespace can match.
     """
     messages = body.get("messages") or []
@@ -217,11 +218,12 @@ class SemanticCache:
     def __init__(self, redis, embedder: Embedder, threshold: float, ttl_s: int,
                  verifier: Verifier | None = None, verify_threshold: float = 0.5):
         """`threshold` is the FAISS cut-off. Without a verifier it alone decides a hit (one
-        stage). With a verifier it only picks a CANDIDATE, and the answer is reused only if
-        the verifier's score is >= `verify_threshold` (two stages)."""
+        stage). With a verifier it only selects a candidate, and the answer is reused only if
+        the verifier's score is >= `verify_threshold` (two stages).
+        """
         import faiss  # imported here so the rest of the gateway loads without it
 
-        faiss.omp_set_num_threads(1)  # single-query searches: OpenMP threads only add overhead
+        faiss.omp_set_num_threads(1)  # searches are one query at a time, where OpenMP threads only add overhead
         self._faiss = faiss
         self.redis = redis
         self.embedder = embedder
@@ -231,7 +233,7 @@ class SemanticCache:
         self.ttl_s = ttl_s
         self._indexes: dict[str, object] = {}  # namespace -> faiss.IndexIDMap2(IndexFlatIP)
         self._lock = threading.Lock()  # FAISS indexes are not safe for concurrent writes
-        # Own pool, so embedding can't starve (or be starved by) asyncio's shared default pool.
+        # A dedicated pool, so embedding neither starves nor is starved by asyncio's default pool.
         self._pool = ThreadPoolExecutor(max_workers=POOL_WORKERS, thread_name_prefix="semantic")
         self._batcher = EmbedBatcher(embedder.encode, self._pool)
 
@@ -239,7 +241,7 @@ class SemanticCache:
     def _index_for(self, ns: str):
         idx = self._indexes.get(ns)
         if idx is None:
-            # Inner product on unit vectors == cosine similarity.
+            # Inner product of unit vectors equals cosine similarity.
             idx = self._faiss.IndexIDMap2(self._faiss.IndexFlatIP(self.embedder.dim))
             self._indexes[ns] = idx
         return idx
@@ -275,8 +277,8 @@ class SemanticCache:
         if parts is None:
             return None
         ns, text = parts
-        # Embedding is CPU work (~5-15 ms). The batcher runs it on our worker threads (keeping
-        # the event loop free) and merges requests that arrive together into one encode() call.
+        # Embedding is CPU work (~5-15 ms). The batcher runs it on the worker pool, keeping the
+        # event loop free, and merges requests that arrive together into one encode() call.
         vec = await self._batcher.embed(text)
         return SemanticQuery(ns, text, vec)
 
@@ -297,8 +299,8 @@ class SemanticCache:
             self._remove(q.namespace, entry_id)
             return SemanticResult(None, sim)
         entry = json.loads(raw)
-        # Defence in depth: if Redis lost data, the id counter restarts and an old FAISS id could
-        # point at a NEW, unrelated entry. Only trust the entry if it really is what we matched.
+        # If Redis lost data, the id counter restarts and an old FAISS id could point at a new,
+        # unrelated entry. The entry is trusted only if its namespace and vector match the query.
         stored = np.frombuffer(base64.b64decode(entry["vec"]), dtype=np.float32)
         if entry.get("ns") != q.namespace or stored.shape != q.vector.shape \
                 or float(stored @ q.vector) < self.threshold:
@@ -306,7 +308,7 @@ class SemanticCache:
             return SemanticResult(None, sim)
         if self.verifier is None:
             return SemanticResult(entry["response"], sim, entry.get("text"))
-        # Stage 2: let the cross-encoder judge (new question, cached question) as a pair.
+        # Stage 2: the cross-encoder scores (new question, cached question) as a pair.
         try:
             score = (await loop.run_in_executor(
                 self._pool, self.verifier.score, [(q.text, entry.get("text") or "")]))[0]
@@ -330,7 +332,7 @@ class SemanticCache:
             }
             await self.redis.set(f"{ENTRY_PREFIX}{entry_id}", json.dumps(entry), ex=self.ttl_s)
         except (RedisError, OSError) as exc:
-            # No answer stored -> don't index the vector either.
+            # No answer was stored, so the vector is not indexed either.
             log.warning("semantic store failed, skipping: %s", exc)
             return
         self._add(q.namespace, q.vector, entry_id)

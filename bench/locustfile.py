@@ -1,9 +1,11 @@
-"""Locust user for bench/load.py. Every request has a unique question, so every request is a
-cache MISS and goes the full path (auth, rate limit, exact + semantic lookup, provider call,
-cache store). That is the worst case for gateway overhead.
+"""Locust user for bench/load.py.
 
-The same file works against the gateway AND directly against the mock (the mock ignores the
-auth header), which is how load.py measures the gateway's added latency.
+Every request has a unique question, so each one is a cache MISS and takes the full path
+(auth, rate limit, exact + semantic lookup, provider call, cache store), the worst case for
+gateway overhead.
+
+The same file runs against the gateway and directly against the mock (the mock ignores the
+auth header), which is how load.py measures the latency the gateway adds.
 """
 import os
 import random
@@ -15,8 +17,8 @@ KEY = os.getenv("GATEWAY_KEY", "bench-key")
 RAW_OUT = os.getenv("LOCUST_RAW_OUT")  # if set, every response time (ms) is saved here
 _times: list[float] = []
 
-# Random word mixes, so no two prompts MEAN the same thing (otherwise the semantic cache
-# would answer some of them and we would not be measuring the full MISS path).
+# Random word mixes, so no two prompts mean the same thing. Otherwise the semantic cache
+# would answer some of them and the full MISS path would not be measured.
 WORDS = """apple river engine castle violin planet garden copper ladder winter pepper rocket
 harbor blanket candle desert falcon glacier hammer island jungle kettle lantern marble
 needle orchard pillow quartz saddle tunnel umbrella valley wagon yogurt zebra anchor
@@ -36,14 +38,14 @@ def random_prompt() -> str:
 
 @events.request.add_listener
 def _record(response_time, exception, **_):
-    # Locust's own CSV rounds times above 100 ms, so we keep the exact values too.
+    # Locust's own CSV rounds times above 100 ms, so the exact values are kept as well.
     if exception is None:
         _times.append(response_time)
 
 
 @events.spawning_complete.add_listener
 def _reset(user_count, **_):
-    # Only measure once all users are running (the ramp-up is excluded, like --reset-stats).
+    # Measure only once all users are running, so the ramp-up is excluded as with --reset-stats.
     _times.clear()
 
 

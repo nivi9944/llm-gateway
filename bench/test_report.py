@@ -1,4 +1,4 @@
-"""Run the pytest suite and save the counts to results/tests.json (the source of "[N] pytest cases").
+"""Run the pytest suite and save the pass/fail counts to results/tests.json for the README.
 
 Run:   python bench/test_report.py
 """

@@ -27,7 +27,7 @@ def test_success_resets_the_count():
     b.record_success()
     for _ in range(4):
         b.record_failure()
-    assert b.state == State.CLOSED  # failures must be CONSECUTIVE
+    assert b.state == State.CLOSED  # only consecutive failures count
 
 
 def test_half_opens_after_cooldown_and_allows_one_trial():
@@ -38,9 +38,9 @@ def test_half_opens_after_cooldown_and_allows_one_trial():
     clock.t += 29.9
     assert not b.allow()
     clock.t += 0.2
-    assert b.allow()            # the single test request
+    assert b.allow()            # the single trial request
     assert b.state == State.HALF_OPEN
-    assert not b.allow()        # everyone else still waits
+    assert not b.allow()        # other callers are still refused
 
 
 def test_closes_on_trial_success():
@@ -72,11 +72,11 @@ def test_stuck_half_open_trial_is_replaced_after_cooldown():
     b.record_failure()
     b.record_failure()
     clock.t += 31
-    assert b.allow()        # test request goes out... and never reports back
+    assert b.allow()        # the trial request goes out and never reports back
     clock.t += 10
     assert not b.allow()
     clock.t += 21
-    assert b.allow()        # a new test request is allowed instead of waiting forever
+    assert b.allow()        # after another cooldown a new trial is allowed
 
 
 async def test_unexpected_error_on_trial_still_counts_as_failure(upstream):

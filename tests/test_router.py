@@ -62,7 +62,7 @@ async def test_timeouts_are_retried(upstream):
 
 
 async def test_401_from_provider_falls_back_without_retry(upstream):
-    upstream.set(PRIMARY, 401)  # e.g. a bad provider key: retrying can't fix it
+    upstream.set(PRIMARY, 401)  # e.g. a bad provider key, which a retry cannot fix
     async with gateway(upstream=upstream) as gw:
         r = await post(gw)
         assert r.status_code == 200 and r.headers["X-Provider"] == "mock2"
@@ -107,7 +107,7 @@ async def test_force_only_provider_is_never_a_fallback(upstream):
         assert r.status_code == 502 and upstream.calls.get(MISTRAL, 0) == 0
         r = await post(gw, headers={"X-Provider-Force": "mistral"})
         assert r.status_code == 200 and r.headers["X-Provider"] == "mistral"
-        assert upstream.bodies[-1]["model"] == "mistral-small-2603"  # request model not allowed: default
+        assert upstream.bodies[-1]["model"] == "mistral-small-2603"  # request model is not allowed, so the default is used
 
 
 async def test_mistral_forwards_only_allowed_model_names(upstream):

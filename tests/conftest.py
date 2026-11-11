@@ -1,8 +1,8 @@
 """Shared test helpers.
 
 Tests never touch the network: providers are faked with httpx.MockTransport, Redis is
-fakeredis (or a real Redis if TEST_REDIS_URL is set, which CI does), and embeddings use
-the tiny HashEmbedder. So the whole suite runs in seconds, offline, for free.
+fakeredis (or a real Redis if TEST_REDIS_URL is set, as in CI), and embeddings use
+the small HashEmbedder, so the suite runs offline in seconds.
 """
 from __future__ import annotations
 
@@ -58,8 +58,10 @@ def ok_body(model: str = "mock", text: str = "hello") -> dict:
 
 
 class FakeUpstream:
-    """Fake LLM providers. Set a behaviour per host:
-    an int status, a list of statuses (one per call, last one repeats), or an exception class.
+    """Fake LLM providers with a configurable behaviour per host.
+
+    A behaviour is an int status, a list of statuses (one per call, the last one repeats),
+    or an exception class to raise.
     """
 
     def __init__(self):
@@ -89,7 +91,7 @@ class FakeUpstream:
 
 
 async def fresh_redis():
-    """An empty Redis: fakeredis by default, or a real one (flushed) if TEST_REDIS_URL is set."""
+    """Return an empty Redis: fakeredis by default, or a flushed real one if TEST_REDIS_URL is set."""
     url = os.getenv("TEST_REDIS_URL")
     if url:
         import redis.asyncio as aioredis
@@ -111,7 +113,7 @@ async def gateway(settings: Settings | None = None, upstream: FakeUpstream | Non
     async with LifespanManager(app) as manager:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.app),
                                      base_url="http://gateway") as client:
-            client.upstream = upstream  # handy for assertions
+            client.upstream = upstream  # exposed for assertions
             client.app = app
             client.redis = r
             yield client

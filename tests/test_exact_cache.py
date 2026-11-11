@@ -17,7 +17,7 @@ async def test_miss_then_hit():
         assert r2.headers["X-Cache"] == "HIT-EXACT"
         assert r2.headers["X-Provider"] == "cache"
         assert r1.json() == r2.json()
-        assert gw.upstream.calls["primary.test"] == 1  # second answer cost nothing
+        assert gw.upstream.calls["primary.test"] == 1  # the second answer came from the cache
 
 
 async def test_leading_and_trailing_whitespace_still_hit():
@@ -28,7 +28,7 @@ async def test_leading_and_trailing_whitespace_still_hit():
 
 
 def test_inner_whitespace_matters_for_the_exact_key():
-    # Indentation changes the meaning of code, so these must NOT share a key.
+    # Indentation changes the meaning of code, so these must not share a key.
     a = chat("fix this:\nif x:\n    y()\nz()")
     b = chat("fix this:\nif x:\n    y()\n    z()")
     assert exact_key(a) != exact_key(b)
@@ -39,7 +39,7 @@ def test_parameters_that_change_the_answer_are_in_the_key():
     for field, value in [("max_tokens", 5), ("tools", [{"type": "function"}]), ("stop", ["\n"]),
                          ("response_format", {"type": "json_object"}), ("seed", 1), ("top_p", 0.1)]:
         assert exact_key({**base, field: value}) != exact_key(base), field
-    assert exact_key({**base, "user": "abc", "stream": False}) == exact_key(base)  # these don't matter
+    assert exact_key({**base, "user": "abc", "stream": False}) == exact_key(base)  # these fields do not affect the key
     with_tool_msg = {**base, "messages": base["messages"] + [{"role": "tool", "tool_call_id": "1", "content": "x"}]}
     other_tool_msg = {**base, "messages": base["messages"] + [{"role": "tool", "tool_call_id": "2", "content": "x"}]}
     assert exact_key(with_tool_msg) != exact_key(other_tool_msg)

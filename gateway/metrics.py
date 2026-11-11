@@ -1,7 +1,7 @@
-"""Observability: one JSON log line per request, plus running totals for /metrics-summary.
+"""Per-request JSON log lines and the running totals behind /metrics-summary.
 
-Cost is an ESTIMATE: tokens x the Gemini paid-tier list price in config. Free-tier calls
-really cost 0, but pricing them at the paid rate gives a meaningful "money saved" figure.
+Cost is an estimate: tokens x the Gemini paid-tier list price in config. Free-tier calls
+cost 0, but pricing them at the paid rate gives a meaningful "money saved" figure.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class Metrics:
         return estimate_cost_usd(usage, self.price_in, self.price_out)
 
     def record(self, entry: dict[str, Any]) -> None:
-        """entry must hold: status, cache, provider, latency_ms, usage."""
+        """Log one request and update the totals. entry needs status, cache, provider, latency_ms and usage."""
         usage = entry.pop("usage", None)
         est = self.cost(usage)
         hit = entry.get("cache", "MISS").startswith("HIT")

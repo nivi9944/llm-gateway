@@ -1,11 +1,9 @@
-"""Circuit breaker: stop calling a provider that is clearly down.
+"""Circuit breaker that stops sending traffic to a provider that keeps failing.
 
-Like the fuse in a house: after too many failures it "trips" so we stop wasting time.
-
-  CLOSED     normal. Count consecutive failures. BREAKER_FAILS in a row -> OPEN.
-  OPEN       skip this provider instantly. After BREAKER_COOLDOWN_S -> HALF_OPEN.
-  HALF_OPEN  let exactly ONE test request through.
-             success -> CLOSED (healthy again); failure -> OPEN (wait another cooldown).
+  CLOSED     normal operation. Counts consecutive failures; BREAKER_FAILS in a row -> OPEN.
+  OPEN       the provider is skipped immediately. After BREAKER_COOLDOWN_S -> HALF_OPEN.
+  HALF_OPEN  exactly one trial request is let through.
+             success -> CLOSED; failure -> OPEN for another cooldown.
 """
 from __future__ import annotations
 
@@ -34,7 +32,7 @@ class CircuitBreaker:
         self._lock = threading.Lock()
 
     def allow(self) -> bool:
-        """May we send a request to this provider right now?"""
+        """Return True if a request may be sent to this provider now."""
         with self._lock:
             if self.state == State.CLOSED:
                 return True
@@ -42,11 +40,11 @@ class CircuitBreaker:
                 if self.clock() - self.opened_at >= self.cooldown_s:
                     self.state = State.HALF_OPEN
                     self._start_trial()
-                    return True  # this caller is the single test request
+                    return True  # this caller becomes the single trial request
                 return False
-            # HALF_OPEN: a test request is already out; everyone else waits.
-            # Safety net: if that test never reported back (e.g. it was cancelled),
-            # allow a new one after another cooldown instead of waiting forever.
+            # HALF_OPEN: a trial request is already in flight, so other callers are refused.
+            # If the trial never reports back (for example it was cancelled), allow a new
+            # one after another cooldown so the breaker cannot get stuck here.
             if not self._trial_in_flight or self.clock() - self._trial_started >= self.cooldown_s:
                 self._start_trial()
                 return True

@@ -10,7 +10,7 @@ async def test_50_concurrent_requests_exactly_capacity_pass():
             gw.post("/v1/chat/completions", json=chat(f"q{i}"), headers=AUTH) for i in range(50)
         ])
         codes = [r.status_code for r in results]
-        assert codes.count(200) == 10  # atomic Lua script: no race lets an 11th through
+        assert codes.count(200) == 10  # the Lua script is atomic, so no race lets an 11th through
         assert codes.count(429) == 40
 
 

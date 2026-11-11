@@ -1,20 +1,20 @@
-"""Benchmark 2: replay a 10,000-request workload and measure cache hit rate + cost saved.
+"""Benchmark 2: replay a 10,000-request workload and measure cache hit rate and cost saved.
 
-The workload is built from QQP *train* pairs. Any pair containing a question that also appears in
+The workload is built from QQP train pairs. Any pair containing a question that also appears in
 the validation split (used to tune the threshold) is dropped, so tuning and testing never share text.
 Each request is one of four kinds (default mix, change with --mix):
 
   unique      a question not seen before                         -> should MISS
   exact       an earlier question repeated word for word          -> should HIT-EXACT
   paraphrase  the human-labelled duplicate of an earlier question -> should HIT-SEMANTIC
-  nearmiss    a question QQP labels as DIFFERENT from an earlier,
+  nearmiss    a question QQP labels as different from an earlier,
               similar-looking one ("hard negative")               -> should MISS
 
-The hit rate depends on this mix, so the mix is saved in replay.json. Quote it together
+The hit rate depends on this mix, so the mix is saved in replay.json and should be quoted
 with the numbers ("on a workload with 20% exact repeats and 20% paraphrases").
 
-Correctness of every cache hit is checked: each provider answer has a unique id, and a hit is
-"correct" only if the question that produced that answer and the new question mean the same thing
+Every cache hit is checked for correctness: each provider answer has a unique id, and a hit is
+correct only if the question that produced that answer and the new question mean the same thing
 by QQP's labels (duplicate pairs are chained together, so if A=B and B=C then A=C).
 
 The gateway runs in-process; the provider is the mock (real HTTP, 0 ms latency).
@@ -104,13 +104,13 @@ def load_pools(args):
 
 
 def build_workload(n: int, mix: dict, dup, non, seed: int) -> list[dict]:
-    """Returns a list of {text, kind}."""
+    """Return the workload as a list of {text, kind} dicts."""
     rng = random.Random(seed)
     rng.shuffle(dup)
     rng.shuffle(non)
     di = ni = 0
     sent: list[dict] = []
-    open_dup: list[int] = []   # dup pairs whose first question was sent, partner not yet
+    open_dup: list[int] = []   # dup pairs whose first question was sent but not yet its partner
     open_non: list[int] = []   # same for non-dup pairs
     kinds, weights = zip(*mix.items())
     for _ in range(n):
@@ -123,7 +123,7 @@ def build_workload(n: int, mix: dict, dup, non, seed: int) -> list[dict]:
         elif kind == "nearmiss" and open_non:
             j = open_non.pop(rng.randrange(len(open_non)))
             item = {"text": non[j][1], "kind": "nearmiss"}
-        else:  # unique (also the fallback early on, when nothing can be repeated yet)
+        else:  # unique, also the fallback early on when nothing can be repeated yet
             if rng.random() < 0.5 and di < len(dup):
                 item = {"text": dup[di][0], "kind": "unique"}
                 open_dup.append(di)
@@ -132,7 +132,7 @@ def build_workload(n: int, mix: dict, dup, non, seed: int) -> list[dict]:
                 item = {"text": non[ni][0], "kind": "unique"}
                 open_non.append(ni)
                 ni += 1
-            else:  # smoke data can run out; recycle as exact repeats
+            else:  # smoke data can run out, so recycle as exact repeats
                 item = {"text": rng.choice(sent)["text"], "kind": "exact"}
         sent.append(item)
     return sent
@@ -158,7 +158,7 @@ async def run(args, workload, threshold, embedder_kind, meaning: Meaning, verify
     app = create_app(settings)
     answer_meaning: dict[str, str] = {}  # provider answer id -> meaning of the question that produced it
     rows = []
-    async with LifespanManager(app, startup_timeout=120) as mgr:  # model load > default 5 s
+    async with LifespanManager(app, startup_timeout=120) as mgr:  # model load takes longer than the default 5 s
         c = app.state.c
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mgr.app), base_url="http://gw",
                                      timeout=60) as client:

@@ -1,7 +1,7 @@
-"""Exact cache: the same question asked the same way gets the stored answer back.
+"""Exact-match response cache in Redis.
 
 Key = SHA-256 of (model + normalised messages + temperature). Value = the full JSON
-response, stored in Redis with a TTL so answers don't live forever.
+response, stored with a TTL so entries expire.
 """
 from __future__ import annotations
 
@@ -22,24 +22,24 @@ IGNORED_FIELDS = {"stream", "stream_options", "user"}
 
 
 def normalise_text(text: Any) -> str:
-    """Trim leading/trailing whitespace only. "Hi there " and "Hi there" share a key.
+    """Trim leading and trailing whitespace only, so "Hi there " and "Hi there" share a key.
 
-    Inner whitespace is kept on purpose: newlines and indentation change the meaning of code.
-    Case is kept too. Paraphrases and small wording changes are the semantic cache's job.
+    Inner whitespace is kept because newlines and indentation change the meaning of code.
+    Case is kept as well. Paraphrases and small wording changes are left to the semantic cache.
     """
     if not isinstance(text, str):
-        # OpenAI "content parts" (lists) are serialised deterministically instead.
+        # OpenAI "content parts" (lists) are serialised deterministically.
         return json.dumps(text, sort_keys=True, separators=(",", ":"))
     return text.strip()
 
 
 def collapse_text(text: str) -> str:
-    """Looser form used for the SEMANTIC cache: collapse all whitespace and lowercase."""
+    """Looser form used by the semantic cache: collapse all whitespace and lowercase."""
     return _WS.sub(" ", text).strip().lower()
 
 
 def normalise_messages(messages: list[dict]) -> list[dict]:
-    """Keep every field of every message (tool_calls, name, ...), only tidy role and content."""
+    """Keep every field of every message (tool_calls, name, ...) and tidy only role and content."""
     out = []
     for m in messages:
         m = dict(m)
@@ -50,8 +50,11 @@ def normalise_messages(messages: list[dict]) -> list[dict]:
 
 
 def request_params(body: dict) -> dict:
-    """Everything that can change the answer except the messages: model, temperature,
-    max_tokens, tools, response_format, stop, seed, top_p, ... (new OpenAI fields included)."""
+    """Return every request field that can change the answer, apart from the messages.
+
+    This covers model, temperature, max_tokens, tools, response_format, stop, seed, top_p and
+    any newer OpenAI fields, since only IGNORED_FIELDS are dropped.
+    """
     params = {k: v for k, v in body.items() if k not in IGNORED_FIELDS and k != "messages"}
     params["temperature"] = float(body.get("temperature", 1.0))
     return params

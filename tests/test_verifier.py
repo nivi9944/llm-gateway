@@ -1,4 +1,4 @@
-"""Two-stage semantic cache: FAISS proposes a candidate, a (fake) cross-encoder decides."""
+"""Two-stage semantic cache tests: FAISS proposes a candidate and a fake cross-encoder decides."""
 from .conftest import AUTH, chat, gateway, make_settings
 
 FIRST = "How do I learn Python quickly?"
@@ -6,7 +6,7 @@ PARAPHRASE = "How can I learn Python quickly?"  # hash-embedder similarity is ab
 
 
 class FakeVerifier:
-    """Returns a fixed score and remembers every pair it was asked about."""
+    """Return a fixed score and record every pair it was asked to score."""
 
     def __init__(self, score: float = 0.9, error: Exception | None = None):
         self.fixed = score
@@ -21,8 +21,8 @@ class FakeVerifier:
 
 
 def two_stage(**overrides):
-    # SEMANTIC_THRESHOLD is set so high that a one-stage cache would never hit: any hit below
-    # must come from the candidate threshold (0.80) plus the verifier.
+    # SEMANTIC_THRESHOLD is set so high that a one-stage cache would never hit, so any hit in
+    # these tests must come from the candidate threshold (0.80) plus the verifier.
     return make_settings(SEMANTIC_VERIFY_ENABLED=True, SEMANTIC_CANDIDATE_THRESHOLD=0.80,
                          SEMANTIC_VERIFY_THRESHOLD=0.5, SEMANTIC_THRESHOLD=0.999, **overrides)
 
@@ -73,7 +73,7 @@ async def test_below_candidate_threshold_never_calls_verifier():
 
 
 async def test_verify_disabled_keeps_one_stage_behaviour():
-    v = FakeVerifier(score=0.0)  # would reject everything, if it were used
+    v = FakeVerifier(score=0.0)  # would reject everything if it were used
     settings = make_settings(SEMANTIC_VERIFY_ENABLED=False, SEMANTIC_THRESHOLD=0.80)
     async with gateway(settings, verifier=v) as gw:
         await post(gw, FIRST)

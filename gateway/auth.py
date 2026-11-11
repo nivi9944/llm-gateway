@@ -1,4 +1,4 @@
-"""API-key check: the "show your ID at the front desk" step.
+"""API key authentication for incoming requests.
 
 Accepts either `Authorization: Bearer <key>` (what OpenAI SDKs send) or `X-API-Key: <key>`.
 """
@@ -18,10 +18,10 @@ def extract_key(request: Request) -> str | None:
 
 
 def check_key(key: str | None, valid_keys: set[str]) -> str:
-    """Return the key if valid, else raise 401.
+    """Return the key if it is valid, otherwise raise a 401.
 
-    hmac.compare_digest compares in constant time, so an attacker can't guess a key
-    character by character from how long the comparison takes.
+    hmac.compare_digest runs in constant time, so response timing does not leak
+    how many leading characters of a guess were correct.
     """
     if key:
         for valid in valid_keys:
@@ -34,5 +34,5 @@ def check_key(key: str | None, valid_keys: set[str]) -> str:
 
 
 def key_id(key: str) -> str:
-    """Short, non-reversible id for logs, so raw keys never appear in log files."""
+    """Return a short, non-reversible id for a key, so raw keys never reach the logs."""
     return hashlib.sha256(key.encode()).hexdigest()[:10]

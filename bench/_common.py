@@ -1,4 +1,4 @@
-"""Helpers shared by the benchmark scripts: start/stop servers, record machine info, save JSON."""
+"""Helpers shared by the benchmark scripts: start and stop servers, record machine info, save JSON."""
 from __future__ import annotations
 
 import json
@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-BENCH_REDIS_URL = os.getenv("BENCH_REDIS_URL", "redis://localhost:6379/1")  # db 1: never your dev cache
+BENCH_REDIS_URL = os.getenv("BENCH_REDIS_URL", "redis://localhost:6379/1")  # db 1, kept apart from the dev cache in db 0
 BENCH_KEY = "bench-key"
 
 

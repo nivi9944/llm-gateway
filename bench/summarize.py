@@ -1,5 +1,6 @@
-"""Read results/*.json, print a summary, fill the README tables, and draft resume bullets.
-Every number comes straight from the JSON files, so nothing is typed by hand.
+"""Read results/*.json, print a summary, fill the README tables and draft one-line result bullets.
+
+Every number comes from the JSON files, so nothing is typed by hand.
 
 README blocks it rewrites (between HTML comment markers):
   HIGHLIGHTS  three one-line highlights under the title
@@ -23,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Comparison files (kept in results/ next to the current ones):
 SINGLE_QQP = "qqp_threshold_single_stage.json"  # semantic cache with MiniLM alone
 SINGLE_REPLAY = "replay_single_stage.json"
-LOAD_STEPS = [  # same load test, each optimisation added on top of the previous one
+LOAD_STEPS = [  # the same load test, with each optimisation added on top of the previous one
     ("Baseline", "load_baseline.json"),
     ("+ dedicated thread pool", "load_threadpool_only.json"),
     ("+ micro-batching", "load_threadpool_batching.json"),
@@ -132,7 +133,7 @@ def machine_line(d: Path) -> str:
 
 
 def overhead_cut(v: dict) -> int:
-    """Whole-percent reduction in p95 overhead, rounded DOWN so it never overstates."""
+    """Whole-percent reduction in p95 overhead, rounded down so it never overstates the gain."""
     return math.floor(100 * (1 - v["p95_overhead"] / v["base_p95_overhead"]))
 
 

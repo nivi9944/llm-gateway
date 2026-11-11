@@ -1,9 +1,9 @@
-"""Live smoke test against a RUNNING gateway (docker compose up -d first).
+"""Live smoke test against a running gateway (start it with docker compose up -d).
 
   1. a normal request                      -> should go to Gemini (X-Provider: gemini)
   2. the same kind of request forced onto Ollama (X-Provider-Force: ollama)
   3. request 1 again                       -> should be X-Cache: HIT-EXACT
-  4. a paraphrase of request 1             -> hopefully X-Cache: HIT-SEMANTIC (shows similarity)
+  4. a paraphrase of request 1             -> expected X-Cache: HIT-SEMANTIC (shows similarity)
 
 Run:   python bench/smoke_live.py --url http://localhost:8000 --key dev-key-1
 Only public, harmless questions are sent (the Gemini free tier may use prompts for training).
@@ -47,7 +47,7 @@ def main() -> None:
     ap.add_argument("--url", default="http://localhost:8000")
     ap.add_argument("--key", default="dev-key-1")
     args = ap.parse_args()
-    # A per-run tag keeps questions new, so a rerun doesn't just hit the cache from last time.
+    # A per-run tag keeps the questions new, so a rerun does not hit entries cached by the last run.
     tag = f"[check {random.randint(1000, 9999)}] "
     q1, q1p, q2 = tag + Q1, tag + Q1_PARAPHRASE, tag + Q2
     with httpx.Client(timeout=120) as c:

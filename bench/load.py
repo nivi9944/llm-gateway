@@ -1,7 +1,7 @@
-"""Benchmark 3: load test. How much latency does the gateway ADD, and how many req/s?
+"""Benchmark 3: load test of the latency the gateway adds and the throughput it sustains.
 
 Setup: mock provider with 800 ms latency. Locust (headless) runs 50 users for 60 s,
-every request unique (cache MISS = the full, most expensive path).
+every request unique (a cache MISS takes the full, most expensive path).
 
 Two runs with identical settings:
   A. Locust -> mock directly          (baseline: what the app would see with no gateway)
@@ -32,9 +32,9 @@ from bench._common import (BENCH_KEY, BENCH_REDIS_URL, ROOT, flush_bench_redis, 
 
 
 def run_locust(host: str, users: int, seconds: int, spawn_rate: float, prefix: str) -> dict:
-    # Users start gradually (spawn_rate per second). Starting all 50 at the same instant makes
-    # them move in lock-step waves that hit the gateway as one burst every 800 ms: a test
-    # artifact, not real traffic. The ramp-up time is excluded from the stats.
+    # Users start gradually (spawn_rate per second). Starting all 50 at once makes them move in
+    # lock-step waves that hit the gateway as one burst every 800 ms, which real traffic does
+    # not do. The ramp-up time is excluded from the stats.
     ramp = int(users / spawn_rate) + 1
     cmd = [sys.executable, "-m", "locust", "-f", str(ROOT / "bench" / "locustfile.py"), "--headless",
            "-u", str(users), "-r", str(spawn_rate), "-t", f"{seconds + ramp}s", "--host", host,
@@ -85,7 +85,7 @@ def main() -> None:
         gw = start_server("gateway.main:app", args.gateway_port, {
             "GATEWAY_KEYS": BENCH_KEY, "REDIS_URL": BENCH_REDIS_URL, "PROVIDER_ORDER": "mock",
             "MOCK_BASE_URL": f"http://127.0.0.1:{args.mock_port}/v1", "EMBEDDER": args.embedder,
-            "BUCKET_CAPACITY": 1_000_000_000, "REFILL_PER_SEC": 1_000_000,  # limiter ON but never blocks
+            "BUCKET_CAPACITY": 1_000_000_000, "REFILL_PER_SEC": 1_000_000,  # limiter on, but set so it never blocks
             "LOG_FILE": str(gw_log),
         }, "load-gateway")
         direct = run_locust(f"http://127.0.0.1:{args.mock_port}", args.users, args.seconds, args.spawn_rate,
@@ -105,7 +105,7 @@ def main() -> None:
 
     from gateway.config import Settings
 
-    s = Settings()  # the gateway child process read the same .env, so this is what it ran with
+    s = Settings()  # the gateway child process read the same .env, so these are the settings it ran with
     semantic = {"verify_enabled": s.SEMANTIC_VERIFY_ENABLED}
     if s.SEMANTIC_VERIFY_ENABLED:
         semantic.update(candidate_threshold=s.SEMANTIC_CANDIDATE_THRESHOLD,

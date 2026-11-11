@@ -1,9 +1,9 @@
-"""The FastAPI app: wires every piece together in the order of the request flow.
+"""FastAPI app that wires the components together in request-flow order.
 
     auth -> rate limit -> exact cache -> semantic cache -> provider (retry/fallback/breaker)
          -> store in caches -> log -> reply
 
-Cheapest checks run first, so a rejected or cached request never costs a provider call.
+The cheapest checks run first, so a rejected or cached request never reaches a provider.
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def create_app(
     transport: httpx.AsyncBaseTransport | None = None,
     sleep=None,
 ) -> FastAPI:
-    """Build the app. Tests pass fakes (fake Redis, fake embedder, fake HTTP transport)."""
+    """Build the app. Tests inject fakes for Redis, the embedder, the verifier and the HTTP transport."""
     s = settings or get_settings()
 
     @asynccontextmanager
@@ -63,7 +63,7 @@ def create_app(
             r = aioredis.from_url(
                 s.REDIS_URL, socket_timeout=s.REDIS_TIMEOUT_S, socket_connect_timeout=s.REDIS_TIMEOUT_S
             )
-        # ONE shared HTTP client: reuses TCP/TLS connections instead of opening one per call.
+        # One shared HTTP client, so TCP/TLS connections are reused across provider calls.
         http = httpx.AsyncClient(
             timeout=httpx.Timeout(s.REQUEST_TIMEOUT_S, connect=5.0),
             limits=httpx.Limits(max_connections=500, max_keepalive_connections=100),
@@ -71,7 +71,7 @@ def create_app(
         )
         semantic = None
         if s.CACHE_ENABLED and s.SEMANTIC_ENABLED:
-            emb = embedder or build_embedder(s.EMBEDDER, s.EMBED_MODEL)  # loaded ONCE at startup
+            emb = embedder or build_embedder(s.EMBEDDER, s.EMBED_MODEL)  # loaded once at startup
             if s.SEMANTIC_VERIFY_ENABLED:  # two stages: FAISS candidate, then cross-encoder check
                 ver = verifier or CrossEncoderVerifier(s.VERIFY_MODEL)  # also loaded once
                 semantic = SemanticCache(r, emb, s.SEMANTIC_CANDIDATE_THRESHOLD, s.CACHE_TTL_SECONDS,
@@ -208,7 +208,7 @@ def create_app(
                 if res.verify_score is not None:
                     verify = {"X-Verify-Score": f"{res.verify_score:.4f}"}
                 if res.response is not None:
-                    # Also store under the exact key, so the next identical request is even cheaper.
+                    # Store under the exact key too, so an identical repeat skips the embedding step.
                     if ekey:
                         await c.exact.set(ekey, res.response)
                     return finish(200, res.response, "HIT-SEMANTIC", "cache", usage=res.response.get("usage"),

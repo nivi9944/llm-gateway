@@ -1,25 +1,25 @@
 """Benchmark 1: choose the semantic-cache threshold from labelled data.
 
 Quora Question Pairs (GLUE QQP) has question pairs labelled by humans as
-"same meaning" (1) or "different" (0). For each pair we compute the MiniLM cosine
-similarity, then sweep thresholds. At threshold t, "similarity >= t" means "the cache
-would reuse the answer". We then measure:
+"same meaning" (1) or "different" (0). Each pair gets a MiniLM cosine similarity, and the
+script sweeps thresholds. At threshold t, "similarity >= t" means the cache would reuse
+the answer. For each t it reports:
 
-  precision  of the pairs the cache WOULD match, the share that truly mean the same.
-             (1 - precision = share of cache hits that would return a WRONG answer.)
-  recall     of the truly-same pairs, the share the cache would catch.
-  false-hit rate  of the truly-DIFFERENT pairs, the share wrongly matched.
+  precision       of the pairs the cache would match, the share that truly mean the same
+                  (1 - precision is the share of hits that would return a wrong answer).
+  recall          of the truly-same pairs, the share the cache would catch.
+  false-hit rate  of the truly-different pairs, the share wrongly matched.
 
-We pick the LOWEST threshold whose precision >= target (default 95%): lowest, because a
-lower threshold catches more paraphrases (more savings) while still meeting the bar.
+The chosen threshold is the lowest one with precision >= target (default 95%), since a
+lower threshold catches more paraphrases while still meeting the precision bar.
 
-Uses the QQP *validation* split. The replay benchmark uses *train* pairs and drops any pair that
+Uses the QQP validation split. The replay benchmark uses train pairs and drops any pair that
 shares a question with validation, so tuning and evaluation never see the same text.
 
-Two-stage mode (--two-stage): MiniLM similarity >= a FIXED candidate threshold (0.85) picks the
-candidate, then a cross-encoder scores each candidate pair. We sweep the cross-encoder threshold
-instead, with the same rule (lowest one with precision >= target). A pair counts as a hit only if
-it passes BOTH stages, exactly like the gateway.
+Two-stage mode (--two-stage): MiniLM similarity >= a fixed candidate threshold (0.85) selects
+the candidate, then a cross-encoder scores each candidate pair. The sweep then runs over the
+cross-encoder threshold with the same rule (lowest one with precision >= target). A pair counts
+as a hit only if it passes both stages, as in the gateway.
 
 Run:   python bench/qqp_threshold.py                  (real run, ~20k pairs)
        python bench/qqp_threshold.py --two-stage      (two-stage cache: sweep the verify threshold)
@@ -92,7 +92,7 @@ def choose(rows: list[dict], target: float) -> dict:
     ok = [r for r in rows if r["precision"] is not None and r["precision"] >= target]
     if ok:
         best = min(ok, key=lambda r: r["threshold"])
-        # If even the lowest threshold in the sweep passes, the true optimum may be lower still.
+        # If the lowest threshold in the sweep already passes, the true optimum may be lower.
         return {**best, "target_met": True, "at_sweep_floor": best["threshold"] == rows[0]["threshold"]}
     best = max((r for r in rows if r["precision"] is not None), key=lambda r: r["precision"])
     return {**best, "target_met": False}
@@ -206,7 +206,7 @@ def main() -> None:
 
 
 def run_two_stage(args, out, q1, q2, y, sims, prep, info, definitions, t0) -> None:
-    """Stage 1 fixed (MiniLM >= args.candidate); sweep stage 2 (cross-encoder score)."""
+    """Keep stage 1 fixed (MiniLM >= args.candidate) and sweep the stage 2 cross-encoder threshold."""
     import os
 
     import torch
@@ -218,7 +218,7 @@ def run_two_stage(args, out, q1, q2, y, sims, prep, info, definitions, t0) -> No
     print(f"{len(idx)} of {len(y)} pairs pass stage 1 (MiniLM >= {args.candidate}); scoring them with "
           f"{args.verify_model}")
     verifier = CrossEncoderVerifier(args.verify_model)
-    torch.set_num_threads(os.cpu_count() or 1)  # offline benchmark: speed only, results are identical
+    torch.set_num_threads(os.cpu_count() or 1)  # offline run, so use every core; this changes speed only, not results
     scores = np.full(len(y), -np.inf)  # pairs that fail stage 1 can never be hits
     t1 = time.time()
     batch = 128
@@ -230,11 +230,11 @@ def run_two_stage(args, out, q1, q2, y, sims, prep, info, definitions, t0) -> No
     s = scores[idx]
     print(f"  cross-encoder score range on candidates: {s.min():.4f} .. {s.max():.4f}")
 
-    rows = sweep(scores, y, VERIFY_THRESHOLDS)  # hit = passes stage 1 AND score >= t
+    rows = sweep(scores, y, VERIFY_THRESHOLDS)  # hit = passes stage 1 and score >= t
     chosen = {"candidate_threshold": args.candidate, "verify_threshold": None,
               **choose(rows, args.target)}
     chosen["verify_threshold"] = chosen["threshold"]
-    stage1 = sweep(sims, y, np.array([args.candidate]))[0]  # stage 1 alone = recall ceiling
+    stage1 = sweep(sims, y, np.array([args.candidate]))[0]  # stage 1 alone gives the recall ceiling
 
     data = {
         "benchmark": "qqp_threshold",

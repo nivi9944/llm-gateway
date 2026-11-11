@@ -14,7 +14,7 @@ async def test_gateway_still_answers_when_redis_is_down():
         r1 = await gw.post("/v1/chat/completions", json=chat(), headers=AUTH)
         r2 = await gw.post("/v1/chat/completions", json=chat(), headers=AUTH)
         assert r1.status_code == 200 and r2.status_code == 200
-        assert r2.headers["X-Cache"] == "MISS"  # no cache available, still served
+        assert r2.headers["X-Cache"] == "MISS"  # no cache available, but still served
         assert gw.upstream.calls["primary.test"] == 2
         health = (await gw.get("/health")).json()
         assert health["redis"].startswith("down")

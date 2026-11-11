@@ -1,16 +1,16 @@
-"""Benchmark 4: chaos test. Does the gateway keep answering when the provider misbehaves?
+"""Benchmark 4: chaos test of how well the gateway keeps answering when a provider misbehaves.
 
 Two mock providers (50 ms latency each): "mock" is the primary, "mock2" the fallback.
-Caching is OFF so every request really needs a provider. Real backoff waits are used.
+Caching is off, so every request needs a provider. Real backoff waits are used.
 
 Scenarios (2,000 requests each, 20 at a time):
   flaky_no_protection        primary fails 30%; 1 try, no fallback, no breaker
   flaky_protected            primary fails 30%; retries + fallback + breaker
-  outage_no_breaker          primary fails 100%; retries + fallback, breaker OFF
+  outage_no_breaker          primary fails 100%; retries + fallback, breaker off
   outage_protected           primary fails 100%; retries + fallback + breaker
 
-The first pair gives the headline "success % with vs without". The second pair shows what
-the breaker adds: during an outage it stops wasting retries (and time) on a dead provider.
+The first pair gives the headline success rate with and without protection. The second pair
+shows what the breaker adds: during an outage it stops spending retries and time on a dead provider.
 
 Run:   python bench/chaos.py     (needs Redis at BENCH_REDIS_URL; no ML model needed)
 """
@@ -60,7 +60,7 @@ async def run_scenario(sc: dict, args) -> dict:
     attempts: list[int] = []
     queue = list(range(args.n))
     t0 = time.perf_counter()
-    async with LifespanManager(app, startup_timeout=120) as mgr:  # model load > default 5 s
+    async with LifespanManager(app, startup_timeout=120) as mgr:  # allow longer than the default 5 s startup
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mgr.app), base_url="http://gw",
                                      timeout=120) as client:
             async def worker():

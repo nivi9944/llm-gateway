@@ -1,10 +1,10 @@
-"""A fake LLM that speaks the OpenAI chat format. Used for tests and benchmarks.
+"""Mock LLM provider with an OpenAI-compatible chat endpoint, for tests and benchmarks.
 
-Why: real LLMs cost money, are slow, and fail at random times you can't control.
-The mock is free, repeatable, and lets us inject failures on purpose.
+Real providers cost money, add variable latency and fail unpredictably. The mock is free
+and repeatable, and failures can be injected on demand.
 
 Env vars (can also be changed live with POST /admin/config):
-  MOCK_LATENCY_MS         how long each answer "thinks" (default 800)
+  MOCK_LATENCY_MS         delay before each answer, in ms (default 800)
   MOCK_FAIL_RATE          fraction of requests that fail, 0.0-1.0 (default 0)
   MOCK_FAIL_STATUS        HTTP status used for failures (default 503)
   MOCK_COMPLETION_TOKENS  approximate answer length in tokens (default 150)
@@ -75,7 +75,7 @@ async def health():
 
 @app.post("/admin/config")
 async def set_config(request: Request):
-    """Change latency / failure rate without restarting (used by the chaos benchmark)."""
+    """Change latency or failure settings at runtime (used by the chaos benchmark)."""
     global _rng
     update = await request.json()
     for k in ("latency_ms", "fail_rate", "fail_status", "completion_tokens"):

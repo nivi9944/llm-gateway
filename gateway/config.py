@@ -1,7 +1,7 @@
-"""All settings in one place. Values come from environment variables or a .env file.
+"""Gateway settings, read from environment variables or a .env file.
 
-Plain-language: every knob of the gateway (keys, URLs, limits, thresholds) lives here,
-so nothing is hard-coded in the rest of the code.
+Keys, URLs, limits and thresholds are all defined here so the rest of the code
+has no hard-coded values.
 """
 from __future__ import annotations
 
@@ -19,14 +19,14 @@ class Settings(BaseSettings):
 
     # --- Redis ---
     REDIS_URL: str = "redis://localhost:6379/0"
-    REDIS_TIMEOUT_S: float = 0.5  # keep small: if Redis is slow/down we fail open quickly
+    REDIS_TIMEOUT_S: float = 0.5  # kept small so a slow or down Redis fails open quickly
 
     # --- Providers ---
     PROVIDER_ORDER: str = "gemini,ollama"  # tried left to right; benchmarks use "mock"
     GEMINI_API_KEY: str = ""
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     GEMINI_MODEL: str = "gemini-3.6-flash"
-    # Mistral is force-only: reachable with the X-Provider-Force: mistral header, never used as a fallback
+    # Mistral is force-only: reachable with the X-Provider-Force: mistral header and never used as a fallback
     # unless it is listed in PROVIDER_ORDER. The free plan only has limits for exact model names, so a
     # request's own model is forwarded when it is in MISTRAL_ALLOWED_MODELS; otherwise MISTRAL_MODEL is used.
     MISTRAL_API_KEY: str = ""
@@ -54,9 +54,9 @@ class Settings(BaseSettings):
     SEMANTIC_THRESHOLD: float = 0.98  # embedding-only cut-off, from results/qqp_threshold_single_stage.json
     EMBEDDER: str = "minilm"  # "minilm" (real) or "hash" (tiny stand-in for tests / offline trials)
     EMBED_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-    # Two-stage semantic cache. When ON, FAISS only proposes a candidate at
-    # SEMANTIC_CANDIDATE_THRESHOLD, and a cross-encoder must score the pair >= SEMANTIC_VERIFY_THRESHOLD.
-    # When OFF, SEMANTIC_THRESHOLD alone decides (the one-stage cache).
+    # Two-stage semantic cache. When enabled, FAISS proposes a candidate at SEMANTIC_CANDIDATE_THRESHOLD
+    # and a cross-encoder must score the pair >= SEMANTIC_VERIFY_THRESHOLD.
+    # When disabled, SEMANTIC_THRESHOLD alone decides (the one-stage cache).
     SEMANTIC_VERIFY_ENABLED: bool = True
     SEMANTIC_CANDIDATE_THRESHOLD: float = 0.85
     SEMANTIC_VERIFY_THRESHOLD: float = 0.98  # from results/qqp_threshold.json (qqp_threshold.py --two-stage)
@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # --- Rate limiting (token bucket per key) ---
     RATE_LIMIT_ENABLED: bool = True
     BUCKET_CAPACITY: float = Field(10, gt=0)
-    REFILL_PER_SEC: float = Field(0.1667, gt=0)  # ~10 requests per minute sustained; must be > 0
+    REFILL_PER_SEC: float = Field(0.1667, gt=0)  # about 10 requests per minute sustained
 
     # --- Reliability ---
     RETRY_MAX: int = 3  # total tries per provider (1 = no retry)
@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     # --- Cost estimate (USD per 1M tokens), Gemini paid-tier list price ---
     # Source: ai.google.dev/gemini-api/docs/pricing (checked 2026-09-24): this list price applies to
     # gemini-3.6-flash, the default model (same as gemini-3.8-flash; valid through 2026-12-31).
-    # These are ESTIMATES: free-tier calls actually cost 0.
+    # These are estimates only; free-tier calls actually cost 0.
     PRICE_INPUT_PER_M: float = 0.75
     PRICE_OUTPUT_PER_M: float = 3.75
 

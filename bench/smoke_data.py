@@ -1,4 +1,4 @@
-"""A tiny hand-written set of question pairs, used ONLY by `--smoke` runs.
+"""Small hand-written set of question pairs, used only by `--smoke` runs.
 
 Smoke runs check that the benchmark code works end to end without downloading anything.
 Their numbers mean nothing and are never written to results/.
